@@ -1,0 +1,46 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets/
+
+# Dependency / build artefacts (anticipatory — safe no-ops today)
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+.cache/
+coverage/
+
+# Python (in case a tool ends up here)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
+*.log
+logs/
+
+# Local databases / dumps
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# Claude local
+.claude/settings.local.json
