@@ -1,5 +1,16 @@
 // @ts-check
 import tsEslint from 'typescript-eslint';
+import nextPlugin from '@next/eslint-plugin-next';
+
+// Files belonging to Next.js frontend apps — get Next.js rules + dep-direction enforcement.
+const NEXT_APP_FILES = [
+  'apps/b2c-web/**/*.ts',
+  'apps/b2c-web/**/*.tsx',
+  'apps/b2b-portal/**/*.ts',
+  'apps/b2b-portal/**/*.tsx',
+  'apps/admin/**/*.ts',
+  'apps/admin/**/*.tsx',
+];
 
 const ALL_BB = [
   '@bb/domain',
@@ -15,7 +26,7 @@ const ALL_BB = [
   '@bb/testing',
 ];
 
-// Backend-internal packages that frontend apps must never import
+// Backend-internal packages that frontend apps must never import (ADR-011).
 const BACKEND_INTERNAL = [
   '@bb/ledger',
   '@bb/payments',
@@ -45,10 +56,27 @@ export default tsEslint.config(
     },
   },
 
-  // --- Dependency direction enforcement ---
+  // --- Next.js plugin for all three frontend apps ---
+  {
+    files: NEXT_APP_FILES,
+    plugins: {
+      '@next/next': nextPlugin,
+    },
+    settings: {
+      next: {
+        rootDir: ['apps/b2c-web', 'apps/b2b-portal', 'apps/admin'],
+      },
+    },
+    rules: {
+      ...nextPlugin.configs.recommended.rules,
+      ...nextPlugin.configs['core-web-vitals'].rules,
+    },
+  },
+
+  // --- Dependency direction enforcement (ADR-011) ---
 
   {
-    // domain: zero internal dependencies (ADR-011)
+    // domain: zero internal dependencies
     files: ['packages/domain/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -58,7 +86,7 @@ export default tsEslint.config(
     },
   },
   {
-    // supplier-contract: only @bb/domain (ADR-011)
+    // supplier-contract: only @bb/domain
     files: ['packages/supplier-contract/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -68,7 +96,8 @@ export default tsEslint.config(
     },
   },
   {
-    // rate-intelligence: only @bb/domain — pricing depends on it, never the reverse (ADR-011, ADR-015)
+    // rate-intelligence: only @bb/domain
+    // pricing imports rate-intelligence — never the reverse (ADR-015)
     files: ['packages/rate-intelligence/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -78,7 +107,7 @@ export default tsEslint.config(
     },
   },
   {
-    // ledger: only @bb/domain (ADR-011)
+    // ledger: only @bb/domain
     files: ['packages/ledger/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -88,7 +117,7 @@ export default tsEslint.config(
     },
   },
   {
-    // payments: @bb/domain + @bb/ledger (ADR-011)
+    // payments: @bb/domain + @bb/ledger
     files: ['packages/payments/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -98,7 +127,7 @@ export default tsEslint.config(
     },
   },
   {
-    // reseller: only @bb/domain (ADR-011 amendment ADR-016/017)
+    // reseller: only @bb/domain
     files: ['packages/reseller/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -118,15 +147,8 @@ export default tsEslint.config(
     },
   },
   {
-    // Frontend apps: never import backend-internal packages (ADR-011)
-    files: [
-      'apps/b2c-web/**/*.ts',
-      'apps/b2c-web/**/*.tsx',
-      'apps/b2b-portal/**/*.ts',
-      'apps/b2b-portal/**/*.tsx',
-      'apps/admin/**/*.ts',
-      'apps/admin/**/*.tsx',
-    ],
+    // Frontend apps: never import backend-internal packages
+    files: NEXT_APP_FILES,
     rules: {
       'no-restricted-imports': [
         'error',

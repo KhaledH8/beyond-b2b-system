@@ -6,7 +6,7 @@
     "build": "next build",
     "dev": "next dev --port 3011",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint",
+    "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "clean": "rimraf .next"
   },
@@ -21,7 +21,6 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "eslint-config-next": "^15.0.0",
     "rimraf": "^6.0.0",
     "vitest": "^2.1.0"
   }
