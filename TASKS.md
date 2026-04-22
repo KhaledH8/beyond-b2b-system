@@ -191,32 +191,78 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Next (Phase 0 — finishing the foundation)
 
-- [ ] Repo scaffolding: pnpm workspaces + Turborepo + `tsconfig.base.json`
-      + ESLint with `import/no-restricted-paths` for dependency direction.
-- [ ] Empty `apps/api` (NestJS) with a health endpoint.
-- [ ] Empty `apps/worker` sharing the composition root.
-- [ ] Empty `apps/b2c-web`, `apps/b2b-portal`, `apps/admin` (Next.js).
-- [ ] `packages/domain` with zero-dependency core types scaffold.
-- [ ] `packages/supplier-contract` with the interface from ADR-003
-      (including the ADR-013 ingestion-mode amendment).
-- [ ] `packages/ledger` skeleton — `LedgerEntry`, `WalletAccount`,
-      balance view ports (no implementation yet).
-- [ ] `packages/payments` skeleton — Stripe port interface only.
-- [ ] `packages/rewards` skeleton — earn-rule and referral-invite
-      types, maturation-worker entry point.
-- [ ] `packages/rate-intelligence` skeleton — `BenchmarkSnapshot`
-      type + read-only query port.
-- [ ] Local dev Docker Compose: Postgres+PostGIS, Redis, object storage
-      emulator. (Optional: add Stripe CLI service for webhook testing.)
-- [ ] CI baseline: typecheck, lint, unit tests, dependency-direction
-      lint (including pricing → rate-intelligence allowed but not
-      reverse).
-- [ ] OpenTelemetry wiring (backend + workers).
-- [ ] Aggregator stubs: `docs/suppliers/hotelbeds.md`, `webbeds.md`,
-      `tbo.md` capturing known API shape, auth, quirks.
-- [ ] `docs/flows/search.md`, `docs/flows/booking.md`,
-      `docs/flows/tender-resolution.md`, `docs/flows/reward-lifecycle.md`
-      (first drafts).
+- [x] Repo scaffolding: `package.json`, `pnpm-workspace.yaml`,
+      `turbo.json`, `tsconfig.base.json`, `.prettierrc`,
+      `eslint.config.mjs` with `no-restricted-imports` dependency-
+      direction enforcement per ADR-011.
+- [x] `apps/api` — NestJS shell with `GET /health` endpoint.
+- [x] `apps/worker` — NestJS application-context shell; BullMQ
+      processors register here in Phase 1.
+- [x] `apps/b2c-web`, `apps/b2b-portal`, `apps/admin` — Next.js 15
+      App Router shells with placeholder pages and correct
+      `tsconfig.json` (ESNext + Bundler resolution).
+- [x] `packages/domain` — zero-dependency core types: `Money`,
+      `TenantContext`, `CanonicalHotel`, `Account`, `Tenant`,
+      three-axis ADR-020 enums (`CollectionMode`,
+      `SupplierSettlementMode`, `PaymentCostModel`),
+      `MoneyMovementTriple`, `Booking`, `PricingTrace`.
+- [x] `packages/supplier-contract` — full `SupplierAdapter` interface
+      per ADR-003 + ADR-013 (`IngestionMode`, `ARI_PUSH` capability)
+      + ADR-020 (`grossCurrencySemantics`, `commissionParams`,
+      three-axis triple on `AdapterSupplierRate`).
+- [x] `packages/ledger` — `LedgerEntry`, `WalletAccount`,
+      `LedgerEntryKind` (all ADR-012/018/020 kinds), `LedgerPort`.
+- [x] `packages/payments` — `PaymentPort` interface (Stripe rail,
+      no implementation). ADR-020 no-PaymentIntent guard documented
+      in JSDoc.
+- [x] `packages/rewards` — `EarnRule`, `RewardPosting`,
+      `RewardCampaign`, `FundingSource`, `ReferralInvite`,
+      `FraudDecision` (ADR-014 amendment).
+- [x] `packages/documents` — `BookingDocument`,
+      `DocumentNumberSequence`, `LegalEntity`, `DeliveryAttempt`,
+      `COMMISSION_INVOICE` type (ADR-016/020).
+- [x] `packages/reseller` — `ResellerProfile`, `BillingProfile`,
+      `TaxProfile`, `BrandingProfile`, `ResellerResaleRule`,
+      `GuestPriceDisplayPolicy`, `ResellerKycProfile`,
+      `PayoutAccount` (ADR-017/018).
+- [x] `packages/rate-intelligence` — `BenchmarkReadPort`,
+      `BenchmarkSnapshot` (read-only advisory, ADR-015).
+- [x] `packages/ui` — placeholder (Phase 1: shadcn/ui).
+- [x] `packages/config` — `AppConfig` + `loadConfig()`.
+- [x] `packages/testing` — `TEST_TENANT_CONTEXT`, `money()` helper,
+      adapter conformance suite placeholder.
+- [x] `infra/docker/docker-compose.yml` — Postgres+PostGIS 16,
+      Redis 7, MinIO (S3-compatible object storage).
+- [x] `infra/migrations/{ledger,payments,rewards,rate-intelligence,
+      direct-connect,documents,reseller}/` — empty directories for
+      future migrations.
+- [x] `.env.example` — local dev environment variable template.
+- [x] `README.md` updated — Getting Started, infra URLs, command
+      reference, full repo layout.
+
+## Next (Phase 1 — first implementation tasks)
+
+- [ ] CI baseline: GitHub Actions workflow — `pnpm install`,
+      `pnpm typecheck`, `pnpm lint`, `pnpm test`, dep-direction
+      check.
+- [ ] OpenTelemetry wiring — Pino logger + OTel trace/metric
+      providers in `apps/api` and `apps/worker`.
+- [ ] First migration files — core tenant, account, and hotel
+      tables (prefix: `core_`, `hotel_`) in `infra/migrations/`.
+- [ ] Hotelbeds adapter — `packages/adapters/hotelbeds/` implementing
+      `SupplierAdapter`; must pass the conformance suite.
+- [ ] Adapter conformance suite — implement in `packages/testing/`
+      alongside the first adapter (ADR-003).
+- [ ] Hotel mapping pipeline — deterministic match phase
+      (`packages/mapping/`).
+- [ ] Supplier content merge — static pipeline into
+      `CanonicalHotel` (`packages/content/`).
+- [ ] Basic pricing evaluator — `PERCENT_MARKUP` rule, trace output
+      (`packages/pricing/`).
+- [ ] Search API endpoint in `apps/api`.
+- [ ] Supplier notes: `docs/suppliers/hotelbeds.md`,
+      `webbeds.md`, `tbo.md`.
+- [ ] Flow docs: `docs/flows/search.md`, `docs/flows/booking.md`.
 
 ## Later (beyond Phase 0)
 

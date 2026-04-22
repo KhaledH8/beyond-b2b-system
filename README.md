@@ -7,8 +7,59 @@ channels with account-aware pricing.
 
 ## Status
 
-Early foundation. No application code yet. This repository currently contains
-architecture, decisions, and working rules that shape what will be built.
+Phase 0 scaffolding complete. The monorepo shell, package boundaries,
+dependency-direction enforcement, and local dev infra are in place. No
+business logic yet — the next step is Phase 1 implementation (first supplier
+adapter + canonical mapping pipeline).
+
+## Getting started
+
+**Prerequisites:** Node.js ≥ 20, pnpm ≥ 9, Docker Desktop.
+
+```bash
+# 1. Install all dependencies
+pnpm install
+
+# 2. Start local infrastructure (Postgres+PostGIS, Redis, MinIO)
+pnpm db:up
+
+# 3. Copy the example env file and fill in the blanks
+cp .env.example .env
+
+# 4. Boot all apps in dev mode (Turborepo runs them in parallel)
+pnpm dev
+
+# Or boot a single app:
+cd apps/api && pnpm dev        # NestJS API — http://localhost:3000
+cd apps/b2c-web && pnpm dev    # B2C storefront  — http://localhost:3010
+cd apps/b2b-portal && pnpm dev # B2B portal      — http://localhost:3011
+cd apps/admin && pnpm dev      # Admin console   — http://localhost:3012
+```
+
+**Health check (once API is running):**
+```bash
+curl http://localhost:3000/health
+# {"status":"ok","version":"0.0.0","timestamp":"..."}
+```
+
+**Useful commands:**
+```bash
+pnpm build       # Build all packages and apps (Turborepo, respects dep order)
+pnpm typecheck   # TypeScript check across the whole monorepo
+pnpm lint        # ESLint including dependency-direction enforcement
+pnpm test        # Vitest across all packages
+pnpm db:down     # Stop local Docker containers
+pnpm db:logs     # Tail container logs
+```
+
+**Infrastructure URLs (local):**
+
+| Service  | URL                          | Notes                  |
+|----------|------------------------------|------------------------|
+| Postgres | `localhost:5432`             | db=beyond_borders, user=bb, pw=bb_local |
+| Redis    | `localhost:6379`             |                        |
+| MinIO    | `http://localhost:9000`      | S3-compatible          |
+| MinIO UI | `http://localhost:9001`      | user=bb_local pw=bb_local_secret |
 
 ## What makes this different
 
@@ -72,14 +123,39 @@ multi-level referral chains.
 CLAUDE.md                         # Working rules for Claude in this repo
 README.md                         # You are here
 TASKS.md                          # Running task list
+package.json                      # pnpm workspace root
+pnpm-workspace.yaml
+turbo.json
+tsconfig.base.json
+eslint.config.mjs                 # Dependency-direction enforcement
+apps/
+  api/                            # NestJS modular monolith
+  worker/                         # Background workers (BullMQ)
+  b2c-web/                        # Next.js — B2C OTA storefront
+  b2b-portal/                     # Next.js — agency / subscriber / corporate
+  admin/                          # Next.js — internal operations console
+packages/
+  domain/                         # Zero-dep core types and value objects
+  supplier-contract/              # SupplierAdapter interface (ADR-003)
+  ledger/                         # LedgerEntry, WalletAccount, LedgerPort
+  payments/                       # PaymentPort (Stripe rail interface)
+  rewards/                        # Loyalty, referral, fraud types
+  documents/                      # Document types and delivery (ADR-016)
+  reseller/                       # Reseller profiles (ADR-017/018)
+  rate-intelligence/              # BenchmarkReadPort (advisory only, ADR-015)
+  ui/                             # Shared React components (placeholder)
+  config/                         # AppConfig + loadConfig()
+  testing/                        # Test fixtures, adapter conformance suite
+infra/
+  docker/docker-compose.yml       # Postgres+PostGIS, Redis, MinIO
+  migrations/                     # DB migrations per module (Phase 1+)
 docs/
   architecture/overview.md        # System architecture
-  adrs/                           # Architecture Decision Records
+  adrs/                           # Architecture Decision Records (ADR-001–020)
   data-model/entities.md          # Canonical domain entities index
-  design/                         # Cross-cutting design notes
-                                  #   payments.md, rewards-referral.md
+  design/                         # payments.md, rewards-referral.md
   flows/                          # Search / book / cancel / reconcile flows
-  prompts/session-start.md        # Prompt to paste at the start of sessions
+  prompts/session-start.md        # Prompt for new sessions
   roadmap.md                      # Phased delivery plan
   suppliers/                      # Per-supplier and per-connector notes
 ```

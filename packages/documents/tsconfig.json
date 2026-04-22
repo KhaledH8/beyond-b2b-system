@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "outDir": "dist",
+    "rootDir": "src",
+    "composite": true,
+    "paths": {
+      "@bb/domain": ["../domain/src/index.ts"],
+      "@bb/ledger": ["../ledger/src/index.ts"],
+      "@bb/reseller": ["../reseller/src/index.ts"]
+    }
+  },
+  "references": [
+    { "path": "../domain" },
+    { "path": "../ledger" },
+    { "path": "../reseller" }
+  ],
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

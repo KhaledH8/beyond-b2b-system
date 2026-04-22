@@ -42,5 +42,8 @@ logs/
 *.db
 *.dump
 
+# TypeScript incremental build info
+*.tsbuildinfo
+
 # Claude local
 .claude/settings.local.json

@@ -1,0 +1,28 @@
+{
+  "name": "@bb/admin",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 3012",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint",
+    "test": "vitest run",
+    "clean": "rimraf .next"
+  },
+  "dependencies": {
+    "@bb/domain": "workspace:*",
+    "@bb/ui": "workspace:*",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint-config-next": "^15.0.0",
+    "rimraf": "^6.0.0",
+    "vitest": "^2.1.0"
+  }
+}
