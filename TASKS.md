@@ -242,9 +242,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Next (Phase 1 — first implementation tasks)
 
-- [ ] CI baseline: GitHub Actions workflow — `pnpm install`,
-      `pnpm typecheck`, `pnpm lint`, `pnpm test`, dep-direction
-      check.
+- [x] CI baseline: `.github/workflows/ci.yml` — Node 24, pnpm 10,
+      single job: install → build → typecheck → lint → test.
+      Root `vitest.config.ts` with `passWithNoTests: true` covers
+      all packages; root `"test": "vitest run"` for Phase 0
+      (switch back to `turbo run test` in Phase 1 when real tests exist).
 - [ ] OpenTelemetry wiring — Pino logger + OTel trace/metric
       providers in `apps/api` and `apps/worker`.
 - [ ] First migration files — core tenant, account, and hotel

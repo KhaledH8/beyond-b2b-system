@@ -8,9 +8,11 @@ channels with account-aware pricing.
 ## Status
 
 Phase 0 scaffolding complete. The monorepo shell, package boundaries,
-dependency-direction enforcement, and local dev infra are in place. No
-business logic yet — the next step is Phase 1 implementation (first supplier
-adapter + canonical mapping pipeline).
+dependency-direction enforcement, and local dev infra are in place. A GitHub
+Actions CI workflow (`.github/workflows/ci.yml`) runs build → typecheck →
+lint → test on every push to `main` and on pull requests. No business logic
+yet — the next step is Phase 1 implementation (first supplier adapter +
+canonical mapping pipeline).
 
 ## Getting started
 

@@ -11,7 +11,7 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "vitest run",
     "clean": "turbo run clean",
     "db:up": "docker compose -f infra/docker/docker-compose.yml up -d",
     "db:down": "docker compose -f infra/docker/docker-compose.yml down",
@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^15.0.0",
+    "vitest": "^2.1.0",
     "typescript-eslint": "^8.0.0",
     "eslint": "^9.0.0",
     "prettier": "^3.3.0",
