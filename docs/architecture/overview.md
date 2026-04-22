@@ -105,6 +105,73 @@ state machine from cart to confirmed booking and ledger entry.
 11. **Every booking is a durable saga with compensations** (ADR-010)
     including tender resolution and rewards accrual steps.
 12. **Every supplier call is idempotent and auditable** (ADR-003).
+13. **Reseller settlement mode is explicit and gated** (ADR-018).
+    Every `ResellerProfile` carries one of three versioned modes:
+    `RESELLER_COLLECTS` (default; reseller bills guest directly, as
+    ADR-017), `CREDIT_ONLY` (BB collects guest payment, earnings are
+    non-withdrawable platform credit), or `PAYOUT_ELIGIBLE` (BB
+    collects guest payment, earnings are withdrawable cash). The
+    default on any new profile is `RESELLER_COLLECTS`.
+14. **Non-withdrawable platform credit and withdrawable cash
+    earnings are distinct books** (ADR-018). `RESELLER_PLATFORM_CREDIT`
+    (CREDIT_ONLY mode) and `RESELLER_CASH_EARNINGS` (PAYOUT_ELIGIBLE
+    mode) are separate `WalletAccount` balance types with different
+    legal weight. Mixing them is an anti-pattern; upgrading
+    `CREDIT_ONLY` → `PAYOUT_ELIGIBLE` does not convert historical
+    credit into cash.
+15. **Reseller cash earnings move through a ledger-derived state
+    machine** (ADR-018): pending → available → (reserved) →
+    paid_out, with clawback. States are projections over
+    `RESELLER_EARNINGS_*` ledger rows, not a separate persisted
+    enum.
+16. **Payouts require strictly more evidence than credit accrual**
+    (ADR-018). `PAYOUT_ELIGIBLE` requires a verified
+    `ResellerKycProfile` with a business `legal_entity_kind`
+    (`INDIVIDUAL_NOT_BUSINESS` never qualifies in MVP), clear
+    sanctions / PEP screening, a VERIFIED `PayoutAccount` whose
+    account holder name matches the KYC legal entity name, signed
+    payout terms, and ops approval. Every withdrawal re-validates
+    the gate set.
+17. **Withdrawals always run through a `PayoutBatch`** (ADR-018).
+    Even a single-request payout has a one-item batch record —
+    batches are the unit of reconciliation against the rail.
+    Clawbacks after payout are modelled by `RefundLiabilityRule`,
+    which may (per contract) allow a first-class
+    `NEGATIVE_AVAILABLE` state rather than a silent adjustment.
+18. **Money-movement is a three-axis triple, declared per rate**
+    (ADR-020). Every `SupplierRate` and every `Booking` carries
+    `CollectionMode` (who collects the guest: BB / reseller /
+    property / upstream platform), `SupplierSettlementMode` (how
+    the supplier is paid: prepaid balance / postpaid invoice /
+    commission-only / VCC / direct property charge), and
+    `PaymentCostModel` (who bears the acquiring cost). Downstream
+    code branches on these axes, never on supplier identity.
+19. **Forbidden mode combinations are filtered at source
+    selection** (ADR-020). E.g. `BB_COLLECTS + COMMISSION_ONLY`,
+    `PROPERTY_COLLECT + PREPAID_BALANCE`, and
+    `UPSTREAM_PLATFORM_COLLECT + VCC_TO_PROPERTY` are rejected
+    before pricing runs. A rate with an invalid triple never
+    reaches checkout.
+20. **`recognized_margin` is mode-aware** (ADR-020 + ADR-014
+    amendment). `BB_COLLECTS` includes platform card fee;
+    `RESELLER_COLLECTS` excludes it (reseller bears it);
+    `COMMISSION_ONLY` modes compute margin from the commission
+    stream, not from a gross-to-net differential we never
+    touched. Earning rewards from gross we never received is an
+    explicit anti-pattern.
+21. **No `TAX_INVOICE` to the guest on `PROPERTY_COLLECT` or
+    `UPSTREAM_PLATFORM_COLLECT` bookings** (ADR-020). We did not
+    sell the supply; we earned a commission. A new
+    `COMMISSION_INVOICE` document archetype (BB → supplier /
+    upstream) carries the commission record, numbered monotonic
+    per (tenant, supplier_id, fiscal_year), separate from legal-
+    tax-doc gapless sequences.
+22. **No `PaymentIntent` mirror for money BB never touched**
+    (ADR-020). `PROPERTY_COLLECT` and `UPSTREAM_PLATFORM_COLLECT`
+    bookings skip authorize/capture entirely. A reseller-earnings
+    accrual is rejected at ledger-write time on these bookings —
+    we cannot accrue earnings from collections that did not flow
+    through our rail.
 
 ## 5. Deployable units
 
@@ -128,11 +195,13 @@ state machine from cart to confirmed booking and ledger entry.
                   │                     │                  │
                   ▼                     ▼                  ▼
 ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
-│ Ledger (ADR-012)     │  │ Payments (ADR-012)   │  │ Rewards (ADR-014)    │
-│ double-entry,        │  │ Stripe Connect,      │  │ loyalty earn,        │
-│ wallet accounts,     │  │ PaymentIntent,       │  │ referral engine,     │
-│ credit lines         │  │ webhooks, transfers  │  │ anti-fraud,          │
-│                      │  │                      │  │ maturation worker    │
+│ Ledger (ADR-012,     │  │ Payments (ADR-012,   │  │ Rewards (ADR-014)    │
+│   ADR-018)           │  │   ADR-018)           │  │ loyalty earn,        │
+│ double-entry,        │  │ Stripe Connect,      │  │ referral engine,     │
+│ wallet accounts,     │  │ PaymentIntent,       │  │ anti-fraud,          │
+│ credit lines,        │  │ webhooks, transfers, │  │ maturation worker    │
+│ reseller earnings    │  │ payout batches,      │  │                      │
+│ (credit + cash)      │  │ withdrawal pipeline  │  │                      │
 └──────────────────────┘  └──────────────────────┘  └──────────────────────┘
 
 ┌──────────────────────┐  ┌──────────────────────────────────────────────┐

@@ -217,13 +217,200 @@ idempotency key).
   is truth; Stripe is a rail whose events we ingest.
 - Silently converting promo credit to cash on refund.
 
+## Amendment 2026-04-22 (see ADR-016, ADR-017)
+
+### Tax invoice is a document, not a ledger entry
+
+The ledger (this ADR) records what we sold. The **tax invoice**
+that represents that sale to the buyer is a `BookingDocument`
+of type `TAX_INVOICE` (ADR-016), issued by a `LegalEntity`
+(ADR-016) bound to the tenant and jurisdiction. The ledger is
+truth; the invoice is a rendering of the truth.
+
+Consequences:
+
+- `LedgerEntry` does not carry an `invoice_number` field.
+  Relationship to the invoice goes in the other direction:
+  `BookingDocument.amounts` are derived from ledger + booking
+  facts at issue time.
+- Refunds continue to post `LedgerEntry{kind: REFUND}` as
+  before. A `CREDIT_NOTE` (ADR-016 legal tax doc) is issued
+  against the original `TAX_INVOICE` by the document-issue
+  worker — not by the ledger.
+- Credit-line invoicing (cycle close, `CREDIT_SETTLEMENT`)
+  similarly emits `TAX_INVOICE` documents. The ledger fact is
+  the settlement; the document is its legal rendering.
+
+### Reseller channel: ledger records sell-to-reseller only
+
+For reseller-channel bookings (ADR-017), the ledger records
+`bb_sell_to_reseller_amount`. The reseller's guest-facing
+resale amount is a document property on
+`RESELLER_GUEST_CONFIRMATION` / `RESELLER_GUEST_VOUCHER` and
+never appears as a `LedgerEntry`. The reseller's own accounting
+of their markup lives on the reseller's own books, not ours.
+
+### Invoice generation timing
+
+Invoice generation previously listed as a Phase 3 open item is
+resolved by ADR-016: the document-issue worker ships in Phase 2
+for the Beyond Borders B2C flow (`TAX_INVOICE` +
+`BB_BOOKING_CONFIRMATION` + `BB_VOUCHER`). Reseller-channel
+invoice + branded guest documents ship in Phase 3 with the
+reseller capability.
+
+## Amendment 2026-04-21 (see ADR-018)
+
+### Reseller collections, earnings books, and payouts
+
+ADR-018 extends this ADR additively to cover reseller-channel
+settlement where **Beyond Borders collects the guest payment on the
+reseller's behalf**. ADR-017 continues to govern the default
+`RESELLER_COLLECTS` case in which the reseller bills the guest
+directly and settles with us via their `BillingProfile` /
+`CreditLine` — that flow is unchanged. ADR-018 adds two additional
+settlement modes:
+
+- **`CREDIT_ONLY`** — BB collects the guest payment; the reseller's
+  net earning accrues as **non-withdrawable platform credit**.
+- **`PAYOUT_ELIGIBLE`** — BB collects the guest payment; the
+  reseller's net earning accrues as **withdrawable cash earnings**,
+  gated by KYC/KYB, sanctions / PEP screening, a verified
+  `PayoutAccount`, and signed payout terms.
+
+New `WalletAccount.balance_type` values (additive, same ledger
+machinery):
+
+- `RESELLER_PLATFORM_CREDIT` — reseller earnings in `CREDIT_ONLY`
+  mode. Non-withdrawable, spendable on future platform bookings,
+  may expire per policy. Treated as platform credit (like
+  `PROMO_CREDIT`), not as safeguarded customer cash.
+- `RESELLER_CASH_EARNINGS` — reseller earnings in `PAYOUT_ELIGIBLE`
+  mode. Cash payable to a verified third-party legal entity. Moves
+  through a pending → available → (reserved) → paid_out lifecycle
+  with clawback; never auto-expires.
+
+These books are **distinct** from each other and from
+`CASH_WALLET`. Mixing them destroys the legal audit trail and is
+explicitly forbidden (see ADR-018 anti-patterns).
+
+New `LedgerEntry.kind` values (additive):
+
+- `RESELLER_EARNINGS_ACCRUAL`, `RESELLER_EARNINGS_MATURATION`,
+  `RESELLER_EARNINGS_CLAWBACK`, `RESELLER_EARNINGS_RESERVE_HOLD`,
+  `RESELLER_EARNINGS_RESERVE_RELEASE`,
+  `RESELLER_EARNINGS_WITHDRAWAL_HOLD`, `RESELLER_EARNINGS_PAID_OUT`,
+  `RESELLER_EARNINGS_WITHDRAWAL_REVERSAL`
+- `RESELLER_CREDIT_ACCRUAL`, `RESELLER_CREDIT_REDEMPTION`,
+  `RESELLER_CREDIT_CLAWBACK`, `RESELLER_CREDIT_EXPIRY`
+
+`PayoutBatch` is extended from the original "Phase 6 tenant-of-tenant
+resale payouts" scope to cover reseller earnings withdrawals driven
+by `WithdrawalRequest` (see ADR-018). The ledger remains
+rail-agnostic; Stripe Connect is the default rail, other bank rails
+plug in as adapters.
+
+### Reseller-collections suspense book
+
+When BB collects the guest payment on a reseller-channel booking,
+the Stripe `payment_intent.succeeded` webhook posts a `TOPUP` into a
+`reseller_collections_suspense` internal book, from which the
+double-entry event splits into (a) revenue recognition of
+`bb_sell_to_reseller_amount`, (b) platform-fee recognition of
+`bb_platform_fee`, and (c) accrual to the reseller's
+`RESELLER_PLATFORM_CREDIT` or `RESELLER_CASH_EARNINGS` book. No
+silent transfers.
+
+### Refund liability ordering
+
+Refunds and chargebacks against reseller-channel bookings follow a
+`RefundLiabilityRule` (ADR-018) that selects the order of recovery
+across `RESERVED`, `AVAILABLE`, `PENDING`, and — where contract
+permits — `NEGATIVE_AVAILABLE`. Post-payout clawbacks are modelled
+explicitly; `NEGATIVE_AVAILABLE` is a first-class state, not an
+accounting surprise.
+
+## Amendment 2026-04-21 (see ADR-020) — supplier-side books and VCC
+
+ADR-020 introduces three orthogonal money-movement axes
+(`CollectionMode`, `SupplierSettlementMode`, `PaymentCostModel`)
+that govern every booking. ADR-012's ledger machinery absorbs them
+additively.
+
+### New platform-internal books (not `WalletAccount` types)
+
+Following the pattern of `revenue_suspense` and
+`reseller_collections_suspense` — these are platform-internal
+double-entry books, not customer-facing wallets:
+
+- `supplier_prepaid_balance_<supplier_id>` — one per supplier we
+  hold a topped-up balance with (TBO-style). Top-ups from our bank
+  to the supplier post as credits; booking drawdowns post as
+  debits. Reconciled against the supplier's statement.
+- `supplier_postpaid_payable_<supplier_id>` — payable accrued under
+  `POSTPAID_INVOICE` (Hotelbeds merchant). Clears on cycle-invoice
+  settlement.
+- `supplier_commission_receivable_<supplier_id>` — receivable
+  accrued under `COMMISSION_ONLY` per each supplier's recognition
+  rule (typically after stay). Clears on commission receipt.
+- `vcc_issuance_suspense` — VCC loads recognized at load time;
+  clears when the property charges the VCC and settlement lands.
+
+### New `LedgerEntry.kind` values (additive)
+
+```
+SUPPLIER_PREPAID_TOPUP          // bank transfer to supplier
+SUPPLIER_PREPAID_DRAWDOWN       // booking consumes balance
+SUPPLIER_POSTPAID_ACCRUAL       // booking adds to payable
+SUPPLIER_POSTPAID_SETTLEMENT    // cycle invoice paid
+SUPPLIER_COMMISSION_ACCRUAL     // commission earnable recognized
+SUPPLIER_COMMISSION_RECEIVED    // commission actually received
+SUPPLIER_COMMISSION_CLAWBACK    // supplier reverses commission
+VCC_LOAD                         // virtual card funded
+VCC_SETTLEMENT                   // property's charge cleared the VCC
+VCC_UNUSED_RETURN                // unused VCC balance returned
+```
+
+All existing ADR-012 invariants apply unchanged (append-only,
+double-entry, idempotency, currency-explicit).
+
+### `PaymentCostModel` on payment-side entries
+
+Every `LedgerEntry` representing an acquiring cost carries the
+resolved `PaymentCostModel` so that margin reports and
+reconciliation segment by who bore the fee. For the commission
+flow, a single ledger entry may not identify whether an amount is
+gross or netted — such ambiguous entries are rejected at write
+time.
+
+### No `PaymentIntent` mirror for upstream-collected bookings
+
+Under `CollectionMode = UPSTREAM_PLATFORM_COLLECT`, BB does **not**
+create a `PaymentIntent` for the guest's payment to the upstream
+platform. Only the commission receivable (and its eventual receipt)
+posts to our ledger. Mirroring a payment we never processed is an
+explicit ADR-020 anti-pattern.
+
+### Reseller earnings write-gate
+
+`RESELLER_EARNINGS_ACCRUAL` and `RESELLER_CREDIT_ACCRUAL` (ADR-018)
+require `CollectionMode = BB_COLLECTS` on the underlying booking.
+Posting either on a `PROPERTY_COLLECT` or
+`UPSTREAM_PLATFORM_COLLECT` booking is rejected at ledger-write
+time — we cannot accrue earnings from money we never collected.
+
 ## Open items
 
 - UAE regulatory clarity on stored-value cash wallets — flagged to
   legal before `CASH_WALLET` goes live in production. `PROMO_CREDIT`,
   `LOYALTY_REWARD`, and `REFERRAL_REWARD` are not stored-value cash
-  and are lower-risk to launch first.
-- Invoice generation engine and templating — Phase 3 (see roadmap).
+  and are lower-risk to launch first. The same concern extends to
+  `RESELLER_CASH_EARNINGS` (ADR-018): `PAYOUT_ELIGIBLE` does not
+  launch in production for a jurisdiction until legal clearance is
+  recorded for that tenant + country combination.
+- Invoice generation engine and templating — **resolved**: moved
+  to ADR-016. Phase 2 for Beyond Borders direct, Phase 3 for
+  reseller-channel.
 - Multi-currency wallet unification UX — out of scope; accounts hold
   per-currency wallets with explicit FX only on user action.
 - Stripe Connect account model (Standard vs Express vs Custom) —

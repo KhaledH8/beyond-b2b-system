@@ -134,3 +134,40 @@ per-invite decision traces stored alongside the invite.
 All of the above — wallet accounts, credit lines, referral invites,
 fraud decisions — carry `tenant_id` as a leading index column. Tenant
 isolation rules from the original decision apply without exception.
+
+## Amendment 2026-04-22 (see ADR-016, ADR-017)
+
+### Reselling is a capability, not a new account type
+
+AGENCY, SUBSCRIBER, and potentially future non-B2C account classes
+may carry a `ResellerProfile` (ADR-017) that enables them to
+resell Beyond Borders bookings to their own end customers under
+their own branding. `account_type` is not expanded; the existing
+B2C | AGENCY | SUBSCRIBER | CORPORATE enum is preserved.
+
+Consequences for this ADR:
+
+- An `Account` may have zero or one `ResellerProfile`. B2C cannot
+  hold one.
+- All reseller-adjacent profiles (`BillingProfile`, `TaxProfile`,
+  `BrandingProfile`, `ResellerResaleRule`,
+  `GuestPriceDisplayPolicy`) are separate rows owned by the
+  reseller account, versioned, audited — not blobs on
+  `Account.settings`.
+- Subscriber groups that do **not** resell (closed-group internal
+  consumers) remain exactly as defined above; no profile required.
+
+### Legal entity
+
+A new `LegalEntity` (ADR-016) is introduced per (tenant,
+jurisdiction). Beyond Borders tax invoices are issued from a
+`LegalEntity`, not from a `Tenant`. Tenants may later hold
+multiple legal entities; Phase 2 ships with one UAE legal entity
+for Beyond Borders.
+
+### Isolation still absolute
+
+Every new profile and every `LegalEntity` row carries `tenant_id`
+as a leading index column. Reseller data never crosses tenant
+boundaries. Reseller accounts within a tenant can never read each
+other's billing / tax / branding data.

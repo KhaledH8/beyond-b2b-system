@@ -118,16 +118,83 @@ anti-fraud outright for referral (architectural invariant).
 
 ## 5. Loyalty — what earns rewards
 
+### 5.1 Starter-kit default (post-2026-04-22 correction)
+
 Default loyalty earn rule (starter kit for new tenants):
 
-- `PERCENT_OF_NET`: 2% of booking net value.
+- `PERCENT_OF_MARGIN`: **20% of `rewardable_margin`** (tenant-tunable;
+  20% is a sane initial anchor — strong enough to feel generous to
+  buyers, cheap enough that we are sharing our margin, not our
+  revenue).
 - Scope: `tenant=<tenant>, account_type=B2C`.
-- Caps: max 100 USD-equivalent per booking.
+- `CAP_AND_FLOOR` wrapper: per-booking cap 50 USD-equivalent, floor 1
+  USD (below floor → no accrual rather than a token amount).
+- `funding_source: PLATFORM_FUNDED`.
 - Clawback window: 7 days after checkout.
 
-Tenants can add more specific rules with higher earn rates per
-account tier, supplier, destination, or campaign. Specificity-score
-resolution (mirroring ADR-004 pricing rules) picks the best match.
+**Why margin, not net**: see ADR-014 amendment (2026-04-22). Gross-
+based earning on a 500 USD booking that returns 40 USD of margin
+to us would burn 25% of the margin on reward alone if the rate
+were 2% of net. Margin-based earning keeps the reward program in a
+predictable fraction of what the booking actually earns us.
+
+### 5.2 `recognized_margin` in one paragraph
+
+`recognized_margin = sellable_amount − net_cost −
+payment_processing_cost − known_refundable_discounts`. Taxes and
+fees pass through untouched. Rewards redeemed on the booking
+**reduce** margin (they cost us on the other side of the ledger).
+Agency commission paid out is not our margin. `rewardable_margin`
+then clamps `recognized_margin` with an optional floor, ceiling,
+and fraction (e.g. "only 60% of realized margin is rewardable"). The
+pricing module owns the computation; rewards consumes it through a
+narrow interface.
+
+### 5.3 Rule types, briefly
+
+| Formula | When it fits |
+|---|---|
+| `PERCENT_OF_MARGIN` | Default. Margin-aware, auditable, bounded. |
+| `FIXED_REWARD_BY_MARGIN_BRACKET` | When the buyer-facing UX needs clean round numbers per booking bracket, not a floating percentage. |
+| `HOTEL_FUNDED_BONUS` | A specific hotel co-funds extra earn for a campaign. Requires a signed `RewardCampaign`. |
+| `MANUAL_OVERRIDE` | Ops grants a bespoke reward (service recovery, launch push, goodwill). Mandatory reason code + approver. |
+| `CAP_AND_FLOOR` | Wrapper. Enforces per-booking min/max on any other formula's output. |
+| `PERCENT_OF_NET` | Deprecated as a default. Allowed only for explicit legacy rules. |
+| `PERCENT_OF_MARKUP` | Simpler cousin of margin-based. Useful for back-of-envelope commercial deals. |
+| `FIXED_PER_NIGHT` | Niche — free-stay campaigns, subscription-like loyalty. |
+| `TIERED` | Multiplier over a base formula (Silver ×1.0, Gold ×1.25, Platinum ×1.5). |
+
+Specificity-score resolution (mirroring ADR-004 pricing rules) picks
+the base rule; `HotelRewardOverride` and active `RewardCampaign`s
+layer on top; `CAP_AND_FLOOR` clamps the result.
+
+### 5.4 Funding source — three flavors
+
+Every posting carries a `funding_source`:
+
+- `PLATFORM_FUNDED` — default; we fund the reward from our own
+  margin.
+- `HOTEL_FUNDED` — the hotel pays for it. Requires a
+  `RewardCampaign` with `funding_agreement_ref` and an approver.
+  The ledger writes a receivable-from-hotel leg alongside the
+  buyer-side accrual so invoicing/reconciliation can settle it.
+- `SHARED_FUNDED` — split per a configured ratio. Two ledger legs,
+  one per funder.
+
+An auditor asking "who paid for this reward?" gets a clean SQL
+answer from the ledger, not a reconstruction from rule logic. This
+is the whole point of making funding source a first-class field.
+
+### 5.5 B2B kickback — same machinery
+
+Agency commission uplift, corporate rebate, subscriber group bonus
+are all **loyalty earn rules scoped to the relevant account or
+account-type**, using the same margin-based default. Account-
+specific contracts can override (e.g. a flat per-booking kickback
+for a long-standing agency). Payouts either accrue to the agency's
+reward wallet (redeemed as tender on future bookings) or are
+credited against the agency's invoice at cycle close — the choice
+is configured per account, not hardcoded.
 
 ## 6. Redemption — tender, not discount
 
@@ -164,6 +231,17 @@ composition changed.
   tender.
 - Running maturation inside the booking saga. Maturation is a
   batch worker; the saga is the hot path.
+- **Earning rewards on booking gross value by default.** Rewards
+  must earn on `recognized_margin`. Gross-based earning silently
+  erodes the margin on thin-margin bookings and punishes
+  rate-protected hotels.
+- **Posting a `HOTEL_FUNDED` reward without a `RewardCampaign` +
+  signed `funding_agreement_ref` + approver.** The ledger write is
+  rejected in this case — an architectural invariant, not a
+  validation rule you can route around.
+- **Computing `recognized_margin` from live Stripe fees.** Use a
+  bracket estimate at accrual; reconcile at capture. Ledger is
+  truth; Stripe is a rail.
 
 ## 8. Observability
 
@@ -187,3 +265,116 @@ composition changed.
   clearly needed (Phase 4+).
 - Cashback conversion (reward → cash). Jurisdictional implications;
   not launching by default.
+
+## 10. UX inspiration — what strong travel reward programs get right
+
+Travel-specific reward programs (regional OTAs, super-app wallets,
+loyalty-first booking products) teach a handful of patterns that
+translate well to our margin-based economics. The **mechanisms** we
+borrow; the **inputs** stay different (margin, not spend).
+
+### 10.1 Simple public-facing tiers
+
+Users do not read earn-rule specificity tables. They read three or
+four tier names and a one-line description per tier. Tiers become a
+`TIERED` multiplier over the margin-based base rule:
+
+- **Explorer** — default. ×1.0 multiplier. Everyone starts here.
+- **Frequent** — reached at N qualifying stays or M rewardable
+  margin in the trailing 12 months. ×1.25.
+- **Elite** — top segment. ×1.5 plus soft perks (better support
+  queue, select direct-contract visibility, early campaign
+  access).
+
+Tier state is a derived view of accrual history, not a stored
+field; the rewards module exposes `currentTier(account)` as a
+read-only query. Tier qualification thresholds are tenant-
+configurable.
+
+### 10.2 Easy redemption at booking
+
+The buyer should see, on the checkout page, **in points *and* in
+booking currency**, how much reward is applicable and the maximum
+they can redeem on this booking. One checkbox — "apply all
+available loyalty" — should work for 80% of cases. The tender
+composition (§6) already supports this; the UX surface is what
+matters.
+
+Key behaviors borrowed from strong programs:
+
+- Reward balance visible on every page, not hidden in an account
+  menu.
+- Redemption amount pre-filled to the maximum the `TenderPolicy`
+  allows, with a slider or input if the buyer wants less.
+- No "min 5000 points to redeem" friction if the floor is below
+  typical wallet balance — minimum redemption thresholds exist but
+  should be set conservatively.
+
+### 10.3 Post-completion crediting, visibly
+
+Buyers tolerate a wait if the wait is **visible and honest**. After
+booking, the UI shows:
+
+```
+Loyalty earned: 42 points  (pending — will credit after
+                            your stay + 7 days)
+```
+
+And on the wallet page:
+
+```
+Pending maturations:
+  +42 pts   booking #B-10234   matures 2026-06-14
+  +18 pts   booking #B-10198   matures 2026-05-30
+
+Available to redeem: 316 pts  (~ USD 31.60)
+```
+
+"Available to redeem" is **only** the POSTED balance. Pending
+balances are visible but non-spendable. This is the pattern that
+builds trust: visible accrual + honest maturation timeline + no
+fine-print surprises.
+
+### 10.4 Wallet-style clarity
+
+Rewards, promo credit, and (eventually) cash wallet should all
+appear in one unified "wallet" view, with each book clearly
+labeled. Users should see:
+
+```
+Your wallet
+  Loyalty         316 pts    (~ USD 31.60)
+  Referral        200 pts    (~ USD 20.00)
+  Promo credit    USD 50.00
+  Cash wallet     USD 0.00   (coming soon)
+```
+
+Each book is a separate `WalletAccount` (ADR-012); the unification
+is UI, not ledger. The user should never have to learn our internal
+book taxonomy.
+
+### 10.5 Lifetime points as a loyalty signal
+
+Strong programs surface **lifetime accrual** (total ever earned,
+not current balance) as the qualification signal for elite tiers.
+This rewards long-term buyers even if they redeem aggressively.
+Derivable from ledger history; no new primitive needed. Surface
+it in the tier-progress UI.
+
+### 10.6 What we deliberately do *not* borrow
+
+- **Spend-based points.** Point value anchored to booking spend
+  (e.g. "1 point per USD spent") is the norm in airline and hotel
+  programs, but it assumes a margin structure we do not have. Our
+  margin varies by source, rate class, and hotel; earning on spend
+  would bleed thin-margin bookings. We borrow the UX feel of
+  "points per booking" via `FIXED_REWARD_BY_MARGIN_BRACKET`, which
+  presents as clean round numbers to the buyer while still being
+  margin-aware under the hood.
+- **Gamification** (streaks, badges, leaderboards). Explicitly out
+  (CLAUDE.md §6).
+- **Complex family/group pooling.** Out for MVP; one account, one
+  wallet.
+- **Opaque devaluation** (silently changing point-to-currency
+  ratios after accrual). Our ratios are configuration, logged, and
+  any change is forward-looking only.

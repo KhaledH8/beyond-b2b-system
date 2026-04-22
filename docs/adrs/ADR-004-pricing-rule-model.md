@@ -156,3 +156,59 @@ governance.
 Evaluation slot: runs inside the **markup chain** (step 3 above),
 sorted by specificity as any other markup rule. It is not a new
 pipeline stage; it is a new rule type.
+
+## Amendment 2026-04-21 (see ADR-020) — net cost and margin are mode-aware
+
+The precedence pipeline is extended with a new trace step and
+mode-aware net-cost resolution. The five-step shape is unchanged;
+the semantics of step 2 and the content of the trace are refined.
+
+### New trace step: `COLLECTION_AND_SETTLEMENT_BIND`
+
+Inserted immediately after step 2 (net cost resolution). Records
+the rate's `CollectionMode`, `SupplierSettlementMode`,
+`PaymentCostModel`, and `gross_currency_semantics` from the
+`SupplierRate` (ADR-003 + ADR-020 amendment). This step does not
+change the sellable amount; it **binds** the booking's money-
+movement semantics into the trace so that every downstream decision
+(tender composition, document issuance, recognized-margin
+computation) sees the same values.
+
+### Net cost resolution by `gross_currency_semantics`
+
+- `NET_TO_BB` (default, current behavior) — supplier returns net;
+  markup chain operates over it; produces BB sell amount as today.
+- `GROSS_TO_GUEST` — supplier returns the guest-facing gross;
+  effective `net_cost = gross − commission`; markup chain operates
+  over `net_cost`. The `gross → net` reduction is its own trace
+  step with the commission rule id.
+- `COMMISSION_RATE` — no gross on the rate; `net_cost = property_rate
+  − commission` where `property_rate` comes from the supplier's
+  content or a contracted property rate; markup chain operates over
+  `net_cost`.
+
+### `recognized_margin` is mode-aware
+
+`recognized_margin` is owned by pricing (per the ADR-014 amendment
+2026-04-22) and consumed by rewards. ADR-020 makes the cost-
+inclusion list vary by `CollectionMode` and `PaymentCostModel`:
+
+- `BB_COLLECTS` modes include platform card-fee estimation.
+- `RESELLER_COLLECTS` excludes platform card fee (reseller bears it).
+- `PROPERTY_COLLECT + COMMISSION_ONLY` and
+  `UPSTREAM_PLATFORM_COLLECT + COMMISSION_ONLY` compute margin from
+  the **commission stream**, not a gross-to-net differential.
+- `VCC_TO_PROPERTY` includes the VCC-load / issuance fee estimate
+  alongside any guest-side acquiring fee.
+
+This is not a schema change to `recognized_margin`; it is a
+computation contract. The guarantee is unchanged: `recognized_margin`
+is never greater than the money BB actually earned on the booking.
+
+### Forbidden additions reiterated (ADR-020)
+
+- Computing margin from a gross BB never received
+  (`UPSTREAM_NETTED`, `COMMISSION_ONLY`).
+- Pricing a rate whose `(CollectionMode,
+  SupplierSettlementMode)` pair is forbidden by ADR-020 — source
+  selection filters these out before the pipeline runs.

@@ -38,6 +38,14 @@ Pricing, visibility rules, and merchandising must be **account-aware**, not
 channel-type-aware alone. A single corporate account may later have custom
 rules that differ from other corporate accounts.
 
+**Reselling is a capability, not a fifth account type.** AGENCY and
+SUBSCRIBER accounts (and potentially future non-B2C classes) may opt in
+to reselling Beyond Borders bookings to their own end customers under
+their own branding, via a `ResellerProfile` (ADR-017). Billing, tax,
+branding, resale-amount rule, and guest-display policy are each their
+own versioned profile — never a blob on `Account.settings`. B2C
+accounts cannot hold a `ResellerProfile`.
+
 ---
 
 ## 3. Supply sources (planned)
@@ -122,9 +130,25 @@ destroys trust with corporate and agency clients.
 not a pricing concern.** Pricing produces the sellable amount; tender
 composition pays it. Neither mutates the other. See ADR-012 and ADR-014.
 
+**Rewards and B2B kickback earn on `recognized_margin`, not booking gross
+value.** Default formula is `PERCENT_OF_MARGIN`. Every reward posting
+carries a `funding_source` (`PLATFORM_FUNDED | HOTEL_FUNDED |
+SHARED_FUNDED`); hotel-funded postings require a `RewardCampaign` with a
+signed `funding_agreement_ref` and an approver. See ADR-014 amendment
+(2026-04-22) for the full model and `recognized_margin` computation.
+
 **Supply connectivity (ADR-013) and market intelligence (ADR-015) are
 separate modules.** Channel-manager ARI is supply we sell; benchmark data
 is advisory pricing input. Do not conflate them.
+
+**Reseller resale amount is a document property, never a ledger fact
+and never a pricing rule.** Our ledger records `source_cost` and
+`bb_sell_to_reseller_amount` (ADR-012). The reseller's guest-facing
+resale amount (fixed, markup, percent, or hidden — ADR-017
+`ResellerResaleRule`) is computed at document render time and appears
+only on `RESELLER_GUEST_*` documents (ADR-016). The pricing trace
+does not attempt to trace the reseller's margin; the reseller's own
+books do that.
 
 ---
 
@@ -216,19 +240,44 @@ preserve** the following, verbatim or near-verbatim:
 7. **Wallet model** — internal double-entry ledger; Stripe is a rail only;
    cash/promo/loyalty/referral/agency-credit are separate books; tender is
    not a pricing rule.
-8. **Rewards lifecycle** — accrue PENDING, mature POSTED after clawback
-   window, clawback on cancellation; referral requires anti-fraud
-   clearance before posting.
+8. **Rewards lifecycle and economics** — accrue PENDING, mature POSTED
+   after clawback window, clawback on cancellation; referral requires
+   anti-fraud clearance before posting. **Default earn formula is
+   `PERCENT_OF_MARGIN` on `recognized_margin`, not on booking gross
+   value.** Every `RewardPosting` carries a `funding_source`
+   (`PLATFORM_FUNDED | HOTEL_FUNDED | SHARED_FUNDED`); hotel-funded
+   postings require a `RewardCampaign` + signed `funding_agreement_ref`
+   + approver. `MANUAL_OVERRIDE` requires actor + reason code + audit
+   trail. B2B kickback uses the same margin-based machinery, account-
+   aware. See ADR-014 amendment (2026-04-22).
 9. **Rate intelligence separation** — public-rate benchmarks are advisory
    pricing input, never supply, never authoritative, never cross-tenant
    without explicit configuration.
-10. **List of modified files in the current session.**
-11. **Open risks** — anything flagged as uncertain, blocked, or dependent
+10. **Reseller capability model (ADR-017)** — reselling is a capability
+    (`ResellerProfile`) carried by AGENCY / SUBSCRIBER (and future non-B2C)
+    accounts, not a new account type. Every reseller has separate
+    versioned `BillingProfile`, `TaxProfile`, `BrandingProfile`,
+    `ResellerResaleRule`, `GuestPriceDisplayPolicy`. Guest-facing
+    resale amount is a document property, never a ledger fact, never a
+    pricing rule.
+11. **Document model (ADR-016)** — three document concerns kept separate:
+    money fact (ledger), document fact (`BookingDocument`), branding/display
+    fact. Document types: `TAX_INVOICE`, `CREDIT_NOTE`, `DEBIT_NOTE`,
+    `BB_BOOKING_CONFIRMATION`, `BB_VOUCHER`,
+    `RESELLER_GUEST_CONFIRMATION`, `RESELLER_GUEST_VOUCHER`. Legal tax docs
+    use gapless sequential numbering per (legal entity, jurisdiction,
+    fiscal year); one sequence per document type per scope; PDFs live in
+    object storage with content hashes; issued documents are immutable;
+    corrections go through credit/debit notes. Document issue and delivery
+    run in dedicated workers **outside** the booking saga.
+12. **List of modified files in the current session.**
+13. **Open risks** — anything flagged as uncertain, blocked, or dependent
     on external confirmation (e.g. "Rayna unconfirmed", "Booking.com
     Demand API pending commercial", "UAE stored-value wallet legal review
     pending", "SynXis partner certification required", "scraper data
-    legal review per jurisdiction").
-12. **Next tasks** — the current top of `TASKS.md` and any in-flight work
+    legal review per jurisdiction", "tax engine ADR pending before
+    reseller onboarding opens").
+14. **Next tasks** — the current top of `TASKS.md` and any in-flight work
     not yet captured there.
 
 If any of the above is at risk of being lost in a compact, **stop and write
@@ -274,12 +323,50 @@ Highest-risk business truths. Violating any of these has asymmetric downside.
 - **Rewards mature; they don't pay out instantly.** Accrue PENDING,
   mature POSTED after clawback window + supplier stay confirmation.
   Referral additionally requires anti-fraud clearance.
+- **Rewards earn on margin, not on booking gross.** Default is
+  `PERCENT_OF_MARGIN` over `recognized_margin`. Gross-based earning
+  silently erodes margin on thin-margin bookings and punishes rate-
+  protected hotels; it is explicitly anti-pattern as a default.
+- **Funding source is load-bearing, not cosmetic.** Every reward
+  posting is platform-funded, hotel-funded, or shared. Hotel-funded
+  postings require a `RewardCampaign` + `funding_agreement_ref` +
+  approver, enforced at ledger-write time. The ledger must always
+  answer "who paid for this reward?" cleanly.
 - **Supply connectivity ≠ market intelligence.** Channel-manager ARI is
   supply we sell. Benchmark/rate-shop data is advisory pricing input.
   Different modules, different tables, different audit trails.
 - **Direct-connect carries a certification tax.** CRS and channel-manager
   integrations have meaningful commercial / onboarding overhead beyond
   the adapter code. Plan for this in the roadmap.
+- **Reselling is a capability on accounts, not an account type.**
+  A `ResellerProfile` attaches to AGENCY or SUBSCRIBER (or future
+  non-B2C classes). Billing, tax, branding, resale-amount, and
+  display are each separate versioned profiles (ADR-017). Do not
+  collapse them into `Account.settings`.
+- **Guest-facing resale amount is never in the ledger.** Our ledger
+  records what we sold to the reseller. The reseller's guest-facing
+  amount (ADR-017 `ResellerResaleRule`: fixed, absolute markup,
+  percent markup, or hidden) appears only on `RESELLER_GUEST_*`
+  documents. Writing the guest-facing amount to `LedgerEntry` is an
+  anti-pattern.
+- **Tax invoice ≠ commercial confirmation ≠ branded voucher.**
+  Legal tax docs (`TAX_INVOICE`, `CREDIT_NOTE`, `DEBIT_NOTE`) have
+  gapless numbering per legal entity + jurisdiction + fiscal year
+  and are immutable. Commercial docs (`BB_BOOKING_CONFIRMATION`,
+  `RESELLER_GUEST_CONFIRMATION`) have their own numbering scopes and
+  are never labelled as tax invoices (ADR-016). Reseller-branded
+  guest documents must never render as tax invoices.
+- **Document numbering is its own primitive.** Never derive numbers
+  from `Booking.id` or timestamps. Never share a sequence across
+  document types. Gapless tax sequences are allocated only at issue,
+  in the same transaction as the `BookingDocument` row.
+- **Document generation is outside the booking saga.** A failed PDF
+  render or email never fails a booking. Issue and delivery run in
+  dedicated workers consuming booking events (ADR-010 amendment).
+- **Branding has a strict fallback chain.** Reseller logo → reseller
+  display name (text only) → `Account.name` → platform default with
+  ops alert. Logos in object storage, content-hashed. No reseller
+  document ever renders without resolving branding.
 
 ---
 

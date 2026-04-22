@@ -197,3 +197,63 @@ infra/
 The existing prefix ownership rules (`core_`, `hotel_`, `supply_`,
 `pricing_`, `merch_`, `booking_`) are unchanged. A module never
 writes to another module's tables.
+
+## Amendment 2026-04-22 (see ADR-016, ADR-017)
+
+### Additional packages
+
+```
+packages/
+  documents/           # document issue + numbering + storage
+                       #   (ADR-016). DocumentType, DocumentTemplate,
+                       #   DocumentNumberSequence, BookingDocument,
+                       #   DeliveryAttempt, issue/delivery workers.
+                       # depends on: domain, ledger (read only),
+                       #   object-storage port
+  reseller/            # reseller capability (ADR-017):
+                       #   ResellerProfile, BillingProfile,
+                       #   TaxProfile, BrandingProfile,
+                       #   ResellerResaleRule,
+                       #   GuestPriceDisplayPolicy
+                       # depends on: domain
+  tax/                 # tax engine (future ADR); for now a
+                       #   narrow port consumed by documents.
+                       # depends on: domain
+```
+
+### Dependency direction additions
+
+- `documents` imports from `reseller` for branding/policy
+  resolution and from `ledger` (read only) for amounts. `reseller`
+  does not import from `documents`.
+- `booking` does not import from `documents`; it emits events
+  that the document-issue-worker consumes (ADR-010 amendment).
+- `documents` and `reseller` do not import from each other's
+  persistence internals. Interaction is through typed ports
+  defined in `domain`.
+
+### Additional table prefixes
+
+| Prefix | Owner module | Examples |
+|---|---|---|
+| `doc_` | documents | `doc_legal_entity`, `doc_number_sequence`, `doc_template`, `doc_booking_document`, `doc_delivery_attempt`, `doc_issue_policy` |
+| `reseller_` | reseller | `reseller_profile`, `reseller_billing_profile`, `reseller_tax_profile`, `reseller_branding_profile`, `reseller_resale_rule`, `reseller_guest_price_display_policy` |
+
+### Infra additions
+
+```
+infra/
+  migrations/
+    documents/         # legal_entity, number sequences, templates,
+                       #   booking_document, delivery_attempt
+    reseller/          # reseller profile + billing/tax/branding/
+                       #   resale/display profile tables
+```
+
+### Object storage
+
+`documents` and `reseller` (logo uploads) introduce the first
+object-storage dependency. Local dev uses a MinIO-compatible
+emulator (already planned in Phase 0). A single bucket per concern
+(`documents`, `branding-assets`), with a write-once bucket policy
+for legal-tax-doc PDFs.

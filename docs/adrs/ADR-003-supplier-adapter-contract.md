@@ -152,3 +152,45 @@ Behavior:
 Downstream code must still not branch on supplier identity; it may,
 however, use `meta` to report operational health differently for PUSH
 vs PULL adapters. Full rationale: ADR-013.
+
+## Amendment 2026-04-21 (see ADR-020) — three-axis money-movement triple
+
+The loose `booking_payment_model: CHANNEL_COLLECTS | HOTEL_COLLECTS |
+SPLIT` capability added above is **superseded** by three independent,
+first-class axes declared per rate. The loose flag is retained as a
+deprecated synonym until all adapters migrate; conformance tests
+emit a warning when only the loose form is present.
+
+`StaticAdapterMeta` additions (additive):
+
+```
+supported_collection_modes:          CollectionMode[]
+supported_supplier_settlement_modes: SupplierSettlementMode[]
+supported_payment_cost_models:       PaymentCostModel[]
+```
+
+`SupplierRate` additions (on every rate, required from Phase 1):
+
+```
+collection_mode:           CollectionMode
+                           // BB_COLLECTS | RESELLER_COLLECTS |
+                           //   PROPERTY_COLLECT |
+                           //   UPSTREAM_PLATFORM_COLLECT
+supplier_settlement_mode:  SupplierSettlementMode
+                           // PREPAID_BALANCE | POSTPAID_INVOICE |
+                           //   COMMISSION_ONLY | VCC_TO_PROPERTY |
+                           //   DIRECT_PROPERTY_CHARGE
+payment_cost_model:        PaymentCostModel
+                           // PLATFORM_CARD_FEE | RESELLER_CARD_FEE |
+                           //   PROPERTY_CARD_FEE | UPSTREAM_NETTED |
+                           //   BANK_TRANSFER_SETTLEMENT
+gross_currency_semantics:  NET_TO_BB | GROSS_TO_GUEST | COMMISSION_RATE
+commission_basis?:         PERCENT | FIXED | TIERED   // COMMISSION_ONLY
+commission_params?:        { ... }                     // COMMISSION_ONLY
+```
+
+The set of allowed `(CollectionMode, SupplierSettlementMode)` pairs
+is closed and defined in ADR-020; adapters that declare an invalid
+combination fail conformance. Downstream code (pricing, booking
+saga, ledger, documents) branches on these axes rather than on the
+legacy `booking_payment_model` or on supplier identity.
