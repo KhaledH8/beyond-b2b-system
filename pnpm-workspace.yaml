@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "packages/adapters/*"
 allowBuilds:
   '@nestjs/core': true
   esbuild: true

@@ -44,3 +44,33 @@ export type GrossCurrencySemantics =
   | 'NET_TO_BB'
   | 'GROSS_TO_GUEST'
   | 'COMMISSION_RATE';
+
+/**
+ * ADR-021 offer-vs-authored shape declaration.
+ * Bedbank / OTA / affiliate APIs return composed offers we snapshot
+ * (SOURCED_COMPOSED); direct / CRS / channel-manager sources author
+ * primitives we compose (AUTHORED_PRIMITIVES). HYBRID_AUTHORED_OVERLAY
+ * covers sources that return composed totals but also push a subset
+ * of authored primitives (rare, e.g. contracted-override layers on
+ * a bedbank-style feed).
+ */
+export type OfferShape =
+  | 'SOURCED_COMPOSED'
+  | 'AUTHORED_PRIMITIVES'
+  | 'HYBRID_AUTHORED_OVERLAY';
+
+/**
+ * ADR-021 description of what a source COMMITTED to expose about a
+ * rate's breakdown. Not a goal we try to infer — the adapter declares
+ * the minimum it guarantees, and each `AdapterSupplierRate` may
+ * declare equal or better granularity per-rate.
+ *
+ * Persisted on every sourced offer snapshot and on every booking-time
+ * snapshot (ADR-021, CLAUDE.md §9 item 12).
+ */
+export type RateBreakdownGranularity =
+  | 'TOTAL_ONLY'
+  | 'PER_NIGHT_TOTAL'
+  | 'PER_NIGHT_COMPONENTS'
+  | 'PER_NIGHT_COMPONENTS_TAX'
+  | 'AUTHORED_PRIMITIVES';

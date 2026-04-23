@@ -25,6 +25,7 @@ const ALL_BB = [
   '@bb/config',
   '@bb/db',
   '@bb/testing',
+  '@bb/adapter-hotelbeds',
 ];
 
 // Backend-internal packages that frontend apps must never import (ADR-011).
@@ -37,6 +38,7 @@ const BACKEND_INTERNAL = [
   '@bb/supplier-contract',
   '@bb/rate-intelligence',
   '@bb/db',
+  '@bb/adapter-hotelbeds',
 ];
 
 function forbid(allowed, message) {
@@ -168,6 +170,23 @@ export default tsEslint.config(
       'no-restricted-imports': [
         'error',
         { patterns: forbid(['@bb/db'], "packages/db has no @bb dependencies. Remove '{name}'.") },
+      ],
+    },
+  },
+  {
+    // adapter-hotelbeds: only @bb/domain + @bb/supplier-contract
+    // (ADR-011 adapter rule: supplier-contract + domain + supplier SDK,
+    // no cross-adapter imports)
+    files: ['packages/adapters/hotelbeds/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: forbid(
+            ['@bb/domain', '@bb/supplier-contract', '@bb/adapter-hotelbeds'],
+            "packages/adapters/hotelbeds may only depend on @bb/domain and @bb/supplier-contract. Remove '{name}'.",
+          ),
+        },
       ],
     },
   },

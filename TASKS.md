@@ -369,13 +369,69 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
           re-parsing).
       No `rate_auth_*` tables yet (Phase 3). No booking-time
       snapshot tables yet (Phase 2).
-- [ ] Hotelbeds adapter — `packages/adapters/hotelbeds/` implementing
-      `SupplierAdapter`; must pass the conformance suite. Declares
-      `offer_shape = SOURCED_COMPOSED` and
-      `min_rate_breakdown_granularity = TOTAL_ONLY` (ADR-021);
-      `searchAvailability` writes `offer_sourced_snapshot` +
-      `offer_sourced_cancellation_policy` + raw-payload object-
-      storage persistence per response.
+- [~] **Hotelbeds adapter scaffold** — `packages/adapters/hotelbeds/`
+      implementing `SupplierAdapter`. Phase 1 scaffold landed; live
+      HTTP client, booking confirmation, and cancellation are
+      explicitly out of scope here and land in Phase 2.
+        - `HOTELBEDS_META` declares `offerShape = SOURCED_COMPOSED`,
+          `minRateBreakdownGranularity = TOTAL_ONLY`,
+          `ingestionMode = PULL`. Supported money-movement axes
+          declared at the meta level; the per-rate triple is
+          resolved at normalization time (see correction below).
+        - **Correction (2026-04-23): money-movement resolver.**
+          The scaffold originally hardcoded `BB_COLLECTS +
+          PREPAID_BALANCE + PLATFORM_CARD_FEE` as a universal
+          per-rate triple — anti-pattern against ADR-020 (triple is
+          per-rate, not per-supplier). Removed and replaced with:
+            - Additive contract field `AdapterSupplierRate.moneyMovementProvenance`
+              in `@bb/supplier-contract`: `'PAYLOAD_DERIVED' | 'CONFIG_RESOLVED' | 'PROVISIONAL'`.
+            - New `packages/adapters/hotelbeds/src/money-movement.ts`:
+              `HotelbedsMoneyMovementResolver` interface +
+              `createProvisionalResolver`, `createStaticResolver`,
+              `createPayloadFirstResolver` factories.
+            - `runSourcedSearchAndPersist` now requires a
+              `moneyMovementResolver` in its deps and calls it
+              per rate; `HotelbedsAdapterDeps` forces composition
+              root to inject one (no silent default).
+            - PROVISIONAL results ship a fallback triple so the
+              required `moneyMovement` field is populated, but
+              `moneyMovementProvenance = 'PROVISIONAL'` is the
+              loud signal that downstream booking must refuse.
+          Phase 2 work: decide which payload signal (if any)
+          Hotelbeds actually exposes from live fixtures and wire
+          `createPayloadFirstResolver` accordingly; until then
+          composition root uses `createProvisionalResolver`.
+        - Additive contract changes: `OfferShape` +
+          `RateBreakdownGranularity` added to `@bb/domain`;
+          `StaticAdapterMeta` + `AdapterSupplierRate` carry the two
+          shape fields (ADR-021 amendment to ADR-003).
+        - `pnpm-workspace.yaml` gains `packages/adapters/*`.
+        - ESLint dep-direction rule restricts the adapter to
+          `@bb/domain` + `@bb/supplier-contract` only (ADR-011).
+        - Ports (local to the adapter, DB-free): `SupplierRegistrationPort`,
+          `RawPayloadStoragePort`, `HotelContentPersistencePort`,
+          `MappingPersistencePort`, `SourcedOfferPersistencePort`.
+          Concrete impls wire in the composition root next.
+        - `runHotelContentSync` — paged pull from Hotelbeds Content
+          API, writes raw payload + `hotel_supplier` rows.
+        - `runSourcedSearchAndPersist` — per availability response:
+          raw payload → `offer_sourced_snapshot` (+ components,
+          restrictions, cancellation policy only when disclosed) →
+          PENDING rows in the four `hotel_*_mapping` tables → flat
+          `AdapterSupplierRate[]` projection. Components/restrictions
+          are NOT fabricated (ADR-021 invariant).
+        - `createStubHotelbedsClient` — every method throws
+          `HotelbedsNotImplementedError` until Phase 2 credentials
+          and signing land.
+        - `HotelbedsAdapter.book` / `.cancel` throw
+          `HotelbedsNotImplementedError` (out of scope).
+        - `tsc --noEmit` and `eslint` clean across all 25 workspace
+          packages; `pnpm build` clean across 18.
+- [ ] **Hotelbeds adapter live wiring (Phase 2)** — concrete DB port
+      implementations in `apps/api` / `apps/worker`, real HTTP client
+      with signing + back-pressure, booking confirmation (feeds the
+      booking saga from ADR-010), cancellation, recorded-fixtures
+      conformance suite.
 - [ ] Adapter conformance suite — implement in `packages/testing/`
       alongside the first adapter (ADR-003).
 - [ ] Hotel mapping pipeline — deterministic match phase

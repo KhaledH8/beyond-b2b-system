@@ -233,6 +233,25 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)(terser@5.46.1)
 
+  packages/adapters/hotelbeds:
+    dependencies:
+      '@bb/domain':
+        specifier: workspace:*
+        version: link:../../domain
+      '@bb/supplier-contract':
+        specifier: workspace:*
+        version: link:../../supplier-contract
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      rimraf:
+        specifier: ^6.0.0
+        version: 6.1.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)(terser@5.46.1)
+
   packages/config:
     devDependencies:
       '@types/node':
