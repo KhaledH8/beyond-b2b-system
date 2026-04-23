@@ -427,11 +427,67 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
           `HotelbedsNotImplementedError` (out of scope).
         - `tsc --noEmit` and `eslint` clean across all 25 workspace
           packages; `pnpm build` clean across 18.
-- [ ] **Hotelbeds adapter live wiring (Phase 2)** — concrete DB port
-      implementations in `apps/api` / `apps/worker`, real HTTP client
-      with signing + back-pressure, booking confirmation (feeds the
-      booking saga from ADR-010), cancellation, recorded-fixtures
-      conformance suite.
+- [~] **Hotelbeds adapter composition-root wiring** — concrete DB-
+      backed persistence ports + MinIO raw payload storage + adapter
+      registry + booking guard, all under `apps/api`. Phase 1 wiring
+      landed; live HTTP client, booking confirmation, and cancellation
+      are still Phase 2.
+        - New deps: `@aws-sdk/client-s3` on `apps/api`;
+          `@bb/adapter-hotelbeds` + `@bb/supplier-contract`
+          workspace refs on `apps/api`.
+        - `packages/config` extended with MinIO access/secret keys,
+          region, and `forcePathStyle` (defaults are dev-compose
+          values — `bb_local`/`bb_local_secret`, `us-east-1`, path-
+          style on).
+        - `apps/api/src/common/ulid.ts` — 26-char ULID generator
+          (crypto.randomBytes + Crockford base32, no third-party dep).
+        - `apps/api/src/object-storage/object-storage.module.ts` —
+          global `S3Client` + bucket providers against MinIO.
+        - Five concrete Hotelbeds ports under
+          `apps/api/src/adapters/hotelbeds/`:
+            - `PgSupplierRegistrationPort` — upserts `supply_supplier`
+              (`source_type = 'AGGREGATOR'`) on `(code)`.
+            - `PgHotelContentPersistencePort` — upserts
+              `hotel_supplier` rows in a single transaction; writes
+              the per-hotel raw-payload ref into `raw_content`.
+            - `PgMappingPersistencePort` — four tables, all inserts
+              `status = 'PENDING', mapping_method = 'DETERMINISTIC'`.
+              Room / rate-plan / occupancy mapping inserts resolve
+              `hotel_supplier.id` via `INSERT ... SELECT`, so a
+              mapping observed for a hotel not yet content-synced is
+              a safe no-op instead of an FK failure.
+              `ON CONFLICT` targets the partial unique indexes
+              (including the occupancy table's `COALESCE(code, '')`
+              expression index).
+            - `PgSourcedOfferPersistencePort` — writes
+              `offer_sourced_snapshot` + 0..N components + 0..N
+              restrictions + 0..1 cancellation policy in a single
+              transaction. Child rows only written when non-empty
+              (ADR-021 invariant: no fabrication).
+            - `MinioRawPayloadStoragePort` — content-addressed put:
+              key = `hotelbeds/<purpose>/<YYYY/MM/DD>/<sha256>`.
+              Hash doubles as filename — idempotent overwrites.
+        - `HotelbedsModule` constructs the adapter with
+          `createProvisionalResolver({ fallbackTriple, reason })`
+          where `reason` spells out "Hotelbeds commercial
+          confirmation pending"; every projected rate thus carries
+          `moneyMovementProvenance = 'PROVISIONAL'`. `OnModuleInit`
+          runs `ensureRegistered()` so the `supply_supplier` row
+          exists before any FK-dependent write.
+        - `SupplierAdapterRegistry` + `AdaptersModule` — supplier-
+          code → `SupplierAdapter` lookup; adding the second
+          adapter is a one-import change.
+        - `apps/api/src/booking/booking-guard.ts` — `assertRateBookable(rate)`
+          throws `ProvisionalMoneyMovementError` when
+          `moneyMovementProvenance === 'PROVISIONAL'`. Call site is
+          the first step of the booking saga (Phase 2).
+        - `pnpm lint`, `pnpm typecheck`, `pnpm build` clean across
+          the full workspace (25 / 25 / 18).
+- [ ] **Hotelbeds adapter live wiring (Phase 2)** — real HTTP client
+      with signing + retry/back-pressure (replaces the stub),
+      recorded-fixtures suite under `packages/testing`, booking
+      confirmation (feeds the booking saga from ADR-010),
+      cancellation, worker-side content-sync cron.
 - [ ] Adapter conformance suite — implement in `packages/testing/`
       alongside the first adapter (ADR-003).
 - [ ] Hotel mapping pipeline — deterministic match phase

@@ -10,13 +10,17 @@
     "paths": {
       "@bb/domain": ["../../packages/domain/src/index.ts"],
       "@bb/config": ["../../packages/config/src/index.ts"],
-      "@bb/db": ["../../packages/db/src/index.ts"]
+      "@bb/db": ["../../packages/db/src/index.ts"],
+      "@bb/supplier-contract": ["../../packages/supplier-contract/src/index.ts"],
+      "@bb/adapter-hotelbeds": ["../../packages/adapters/hotelbeds/src/index.ts"]
     }
   },
   "references": [
     { "path": "../../packages/domain" },
     { "path": "../../packages/config" },
-    { "path": "../../packages/db" }
+    { "path": "../../packages/db" },
+    { "path": "../../packages/supplier-contract" },
+    { "path": "../../packages/adapters/hotelbeds" }
   ],
   "include": ["src"],
   "exclude": ["node_modules", "dist"]
