@@ -257,3 +257,45 @@ object-storage dependency. Local dev uses a MinIO-compatible
 emulator (already planned in Phase 0). A single bucket per concern
 (`documents`, `branding-assets`), with a write-once bucket policy
 for legal-tax-doc PDFs.
+
+## Amendment 2026-04-22 (see ADR-021) — rate / offer table prefixes
+
+ADR-021 introduces two new prefixes and extends the existing
+`hotel_` and `booking_` prefixes with ADR-021-owned tables. Module
+ownership is unchanged; the additions are additive.
+
+### Additional table prefixes
+
+| Prefix | Owner module | Examples |
+|---|---|---|
+| `rate_` | supply (ADR-021 authored primitives) | `rate_auth_base_price`, `rate_auth_extra_person_rule`, `rate_auth_meal_supplement`, `rate_auth_tax_component`, `rate_auth_fee_component`, `rate_auth_restriction`, `rate_auth_allotment`, `rate_auth_cancellation_policy`, `rate_contract`, `rate_contract_season`, `rate_contract_season_date_band`, `rate_contract_price`, `rate_promotion`, `rate_promotion_scope`, `rate_promotion_rule` (ADR-021 amendment 2026-04-23) |
+| `offer_` | supply (ADR-021 sourced snapshots) | `offer_sourced_snapshot`, `offer_sourced_component`, `offer_sourced_restriction`, `offer_sourced_cancellation_policy` |
+
+Existing prefix extensions:
+
+- `hotel_` gains `hotel_room_type`, `hotel_rate_plan`,
+  `hotel_meal_plan`, `hotel_occupancy_template`,
+  `hotel_child_age_band`, and the four mapping tables
+  (`hotel_room_mapping`, `hotel_rate_plan_mapping`,
+  `hotel_meal_plan_mapping`, `hotel_occupancy_mapping`). Still owned
+  by content/mapping.
+- `booking_` gains the four ADR-021 snapshot tables
+  (`booking_sourced_offer_snapshot`,
+  `booking_authored_rate_snapshot`,
+  `booking_cancellation_policy_snapshot`,
+  `booking_tax_fee_snapshot`). Still owned by booking.
+
+### Infra additions
+
+```
+infra/
+  migrations/
+    rates/             # hotel_room_type / rate_plan / meal_plan /
+                       #   occupancy_template / child_age_band +
+                       #   the four *_mapping tables (Phase 1);
+                       #   rate_auth_* tables (Phase 3)
+    offers/            # offer_sourced_* tables (Phase 1)
+```
+
+Booking-time snapshot tables (`booking_*_snapshot`) live under
+existing `infra/migrations/booking/`.

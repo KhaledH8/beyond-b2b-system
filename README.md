@@ -54,6 +54,23 @@ pnpm db:down     # Stop local Docker containers
 pnpm db:logs     # Tail container logs
 ```
 
+**Database migrations (Knex — migration runner only, no ORM):**
+```bash
+# First-time setup
+pnpm db:up           # start Postgres+PostGIS, Redis, MinIO via Docker
+cp .env.example .env # fill in DATABASE_URL (default already matches docker-compose)
+
+# Run all pending migrations
+pnpm db:migrate
+
+# Roll back the last batch
+pnpm db:rollback
+```
+
+Migration files live under `infra/migrations/<module>/` sorted by timestamp prefix.
+The `knex_migrations` table in Postgres tracks which have run.
+Add new migration files to the correct module subdirectory — the runner picks them up automatically.
+
 **Infrastructure URLs (local):**
 
 | Service  | URL                          | Notes                  |

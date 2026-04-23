@@ -270,14 +270,29 @@ preserve** the following, verbatim or near-verbatim:
     object storage with content hashes; issued documents are immutable;
     corrections go through credit/debit notes. Document issue and delivery
     run in dedicated workers **outside** the booking saga.
-12. **List of modified files in the current session.**
-13. **Open risks** — anything flagged as uncertain, blocked, or dependent
+12. **Rate / offer model (ADR-021)** — sourced composed offers
+    (`offer_sourced_*`) vs authored primitives (`rate_auth_*`) are
+    separate shapes, never flattened into one another. Canonical
+    product dimensions (`hotel_room_type`, `hotel_rate_plan`,
+    `hotel_meal_plan`, `hotel_occupancy_template`,
+    `hotel_child_age_band`) + the four mapping tables bridge both.
+    `OfferShape` and `RateBreakdownGranularity` persisted on every
+    snapshot and on `Booking`. Booking-time snapshots
+    (`booking_sourced_offer_snapshot` /
+    `booking_authored_rate_snapshot` /
+    `booking_cancellation_policy_snapshot` /
+    `booking_tax_fee_snapshot`) are immutable, written in the
+    `CONFIRMED` transaction; historical bookings never re-derive
+    from live supply. Pricing evaluator has two code paths; never
+    fabricate authored primitives from a sourced total.
+13. **List of modified files in the current session.**
+14. **Open risks** — anything flagged as uncertain, blocked, or dependent
     on external confirmation (e.g. "Rayna unconfirmed", "Booking.com
     Demand API pending commercial", "UAE stored-value wallet legal review
     pending", "SynXis partner certification required", "scraper data
     legal review per jurisdiction", "tax engine ADR pending before
     reseller onboarding opens").
-14. **Next tasks** — the current top of `TASKS.md` and any in-flight work
+15. **Next tasks** — the current top of `TASKS.md` and any in-flight work
     not yet captured there.
 
 If any of the above is at risk of being lost in a compact, **stop and write
@@ -367,6 +382,28 @@ Highest-risk business truths. Violating any of these has asymmetric downside.
   display name (text only) → `Account.name` → platform default with
   ops alert. Logos in object storage, content-hashed. No reseller
   document ever renders without resolving branding.
+- **Sourced offers and authored rates are different shapes.**
+  (ADR-021.) Bedbank / OTA / affiliate APIs return composed offers
+  we snapshot (`offer_sourced_*`); direct / CRS / channel-manager
+  sources author primitives we compose (`rate_auth_*`). Never
+  fabricate authored primitives from a sourced total (per-extra-adult
+  supplements, per-day base rates, structured tax lines the API did
+  not commit to exposing) — every invented field is a reconciliation
+  hazard and a dispute-liability time bomb. Never flatten authored
+  primitives into a composed-row store at write time — it breaks
+  ARI semantics and forces mass rewrites on every yield change. The
+  pricing evaluator has two code paths (`SOURCED_COMPOSED` and
+  `AUTHORED_PRIMITIVES`); booking-time snapshots flatten both into
+  a uniform downstream shape so documents, reconciliation, and
+  rewards never branch on shape.
+- **Booking-time snapshots are immutable; live shape stays on the
+  supply side.** (ADR-021.) At `CONFIRMED` we pin the cancellation
+  policy, the tax/fee breakdown, and exactly one of a sourced-offer
+  or authored-rate snapshot in the same transaction as the
+  confirmation. Historical bookings are never re-derived from live
+  primitives or refreshed offers; corrections flow through ADR-016
+  credit/debit notes. A re-parsed cancellation policy (new parser
+  version) does not rewrite existing booking snapshots.
 
 ---
 

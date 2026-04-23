@@ -195,10 +195,12 @@ acquiring.
 - `SupplierConnection` — per-tenant credentials + settings
 - `SupplierRate` — ephemeral. Carries `CollectionMode`,
   `SupplierSettlementMode`, `PaymentCostModel`, and
-  `gross_currency_semantics` (ADR-020); for `COMMISSION_ONLY`
+  `gross_currency_semantics` (ADR-020); `offer_shape` and
+  `rate_breakdown_granularity` (ADR-021); for `COMMISSION_ONLY`
   rates also carries `commission_basis` + `commission_params`.
 - `ConfirmedSupplierRate` — ephemeral, short-expiry. Same
-  ADR-020 triple as the originating `SupplierRate`.
+  ADR-020 triple and ADR-021 shape fields as the originating
+  `SupplierRate`.
 - `DirectContract`, `DirectContractRate` — internal tables surfaced
   via the direct-contract adapter
 
@@ -224,6 +226,9 @@ acquiring.
   triple (`CollectionMode`, `SupplierSettlementMode`,
   `PaymentCostModel`) immutably at confirmation so refund /
   dispute / reconciliation decades later see the same semantics.
+  Also persists `offer_shape` (ADR-021) immutably at confirmation;
+  exactly one of `BookingSourcedOfferSnapshot` /
+  `BookingAuthoredRateSnapshot` is attached per booking.
 - `BookingLeg` — per-room or per-night as needed
 - `BookingSaga` — durable saga state
 - `Guest` — traveler details (PII-sensitive)
@@ -346,6 +351,224 @@ through a narrow typed interface. Definition: ADR-014 amendment
 - `BenchmarkHotelMapping` — provider id → canonical_hotel_id mapping
   (parallel to ADR-008 mapping, separate namespace)
 
+## Canonical product dimensions (ADR-021)
+
+Platform-wide vocabulary for the non-hotel-identity attributes that
+make up a bookable offer. Sourced and authored supply both map into
+these through dedicated mapping tables; unmapped is acceptable and
+degrades analytics gracefully.
+
+- `HotelRoomType` — `(canonical_hotel_id, code, name, description,
+  max_occupancy_hint, status)`. Stable canonical code per hotel
+  (e.g. `DLX_KNG`).
+- `HotelRatePlan` — `(canonical_hotel_id, code, name, rate_class,
+  refundable, meal_plan_default_code?, description, status)`.
+  `rate_class ∈ {PUBLIC_BAR, ADVANCE_PURCHASE, NON_REFUNDABLE, MEMBER,
+  CORPORATE, NEGOTIATED, OPAQUE_WHOLESALE}`. No free-text class.
+- `HotelMealPlan` — platform-global short list (`RO`, `BB`, `HB`,
+  `FB`, `AI`) with optional per-hotel overrides.
+- `HotelOccupancyTemplate` — `(canonical_hotel_id, room_type_id,
+  rate_plan_id?, base_adults, max_adults, max_children, max_total,
+  standard_bedding)`.
+- `HotelChildAgeBand` — `(canonical_hotel_id, band_code,
+  min_age_inclusive, max_age_inclusive, status)`. Per-hotel.
+
+Mapping surface, mirrors ADR-008:
+
+- `HotelRoomMapping` — supplier room code → canonical room type,
+  with confidence, provenance, `superseded_by`.
+- `HotelRatePlanMapping` — supplier rate code → canonical rate plan,
+  plus optional `rate_class_override`.
+- `HotelMealPlanMapping` — supplier meal code → canonical meal plan;
+  typically supplier-global, not per-hotel.
+- `HotelOccupancyMapping` — supplier occupancy template code →
+  canonical `HotelOccupancyTemplate`.
+
+## Rates and offers (ADR-021)
+
+Two shapes, kept deliberately separate. Both produce a uniform
+booking-time snapshot so downstream (documents, reconciliation,
+rewards) never branches on shape.
+
+### Offer shape enums
+
+- `OfferShape` ∈ `{SOURCED_COMPOSED, AUTHORED_PRIMITIVES,
+  HYBRID_AUTHORED_OVERLAY}`. Persisted on `Booking` and declared in
+  `StaticAdapterMeta`.
+- `RateBreakdownGranularity` ∈ `{TOTAL_ONLY, PER_NIGHT_TOTAL,
+  PER_NIGHT_COMPONENTS, PER_NIGHT_COMPONENTS_TAX,
+  AUTHORED_PRIMITIVES}`. Describes what a source committed to
+  exposing. Persisted on every snapshot and on booking snapshots.
+- `RestrictionKind` ∈ `{STOP_SELL, CTA, CTD, MIN_LOS, MAX_LOS,
+  ADVANCE_PURCHASE_MIN, ADVANCE_PURCHASE_MAX, RELEASE_HOURS,
+  CUTOFF_HOURS}`. Shared enum across authored and sourced shapes;
+  `params` JSONB is validated per-kind.
+
+### Sourced offer snapshots (bedbank / OTA / affiliate — `offer_*`)
+
+- `SourcedOfferSnapshot` — one row per returned offer per search
+  session. Fields include supplier code, raw-payload hash + storage
+  ref, total amount, `rate_breakdown_granularity`, TTL.
+- `SourcedOfferComponent` — optional per-line breakdown when (and
+  only when) the supplier exposed it. `component_kind ∈ {ROOM_RATE,
+  MEAL_SUPPLEMENT, EXTRA_PERSON_CHARGE, TAX, FEE, DISCOUNT, OTHER}`.
+- `SourcedOfferRestriction` — disclosed restriction-like metadata,
+  plus `source_verbatim_text` for legal defensibility.
+- `SourcedOfferCancellationPolicy` — structured timeline +
+  verbatim prose + `parsed_with` version pointer.
+
+### Authored rate primitives (direct / CRS / CM — `rate_auth_*`)
+
+- `AuthoredBasePrice` — per (supplier, hotel, rate plan, room type,
+  meal plan, stay date).
+- `AuthoredExtraPersonRule` — `person_kind ∈ {EXTRA_ADULT, CHILD}`,
+  optional `child_age_band_id`, `pricing_mode ∈ {FLAT,
+  PERCENT_OF_BASE, FREE}`.
+- `AuthoredMealSupplement` — per meal plan, per occupant class.
+- `AuthoredTaxComponent` — per jurisdiction/hotel, `component_kind ∈
+  {VAT, CITY_TAX, TOURISM_FEE, SERVICE_CHARGE, OTHER}`, `basis ∈
+  {PER_STAY, PER_NIGHT, PER_NIGHT_PER_PERSON, PERCENT_OF_BASE}`,
+  inclusive/additive.
+- `AuthoredFeeComponent` — `component_kind ∈ {RESORT_FEE,
+  CLEANING_FEE, EXTRA_BED_FEE, OTHER}`, `payable_to ∈ {PROPERTY,
+  PLATFORM, SUPPLIER}`, mandatory flag.
+- `AuthoredRestriction` — per (stay_date, rate_plan?, room_type?),
+  with `RestrictionKind` + `params` JSONB.
+- `AuthoredAllotment` — optional inventory count per (rate_plan,
+  room_type, stay_date).
+- `AuthoredCancellationPolicy` — versioned, immutable, structured
+  `windows_jsonb` timeline.
+
+### Seasonal contracts and promotions (ADR-021 amendment 2026-04-23)
+
+Authored-rate supply has two **authoring modes** under
+`OfferShape = AUTHORED_PRIMITIVES`:
+
+- `SEASONAL_CONTRACT` — static seasonal paper contracts. Base
+  rate authored per season, expanded per stay night via
+  season/date-band lookup at pricing time. Lives in
+  `rate_contract*`.
+- `PER_DAY_STREAM` — yield-managed CRS / CM ARI. Base rate
+  streamed per day into `rate_auth_base_price` (ADR-021 v1).
+
+A given `(supplier, canonical_hotel, rate_plan)` picks exactly one
+authoring mode; mixing on the same rate plan is rejected at
+contract activation.
+
+#### Contract spine (`rate_contract*`)
+
+- `RateContract` — `(tenant, supplier, canonical_hotel,
+  contract_code, default_currency, effective_from/to, signed_at,
+  signed_by, authoring_mode = SEASONAL_CONTRACT, status ∈ {DRAFT,
+  ACTIVE, SUSPENDED, EXPIRED, TERMINATED, SUPERSEDED},
+  supersedes_id?)`. Rate-plan / room-type coverage is implicit in
+  the presence of `RateContractPrice` rows.
+- `RateContractSeason` — named season within a contract (e.g.
+  `LOW`, `SHOULDER`, `PEAK`). Fields: `code`, `name`, `priority`
+  (for cross-season date-band overlap resolution; higher wins),
+  `status ∈ {DRAFT, ACTIVE, ARCHIVED}`, `copied_from_season_id?`,
+  `copied_at?`, `copied_by_ref?`.
+- `RateContractSeasonDateBand` — non-contiguous date bands
+  belonging to a season. One season → N bands (e.g. High Season
+  spanning Dec 15–Jan 15 **and** Jul 1–Aug 31).
+- `RateContractPrice` — authored base rate per `(contract, season,
+  room_type, rate_plan, meal_plan, occupancy_template)`. Fields:
+  `base_amount_minor_units`, `currency` (defaults to contract
+  currency), `status`. Partial unique index on the six-column
+  natural key where `status = 'ACTIVE'`.
+
+Extra-person rules, meal supplements, restrictions, fee
+components, and cancellation policies continue to live in the
+existing `rate_auth_*` tables (ADR-021 v1) and gain **optional
+nullable** `contract_id?` / `season_id?` columns for narrow
+scoping. Default NULL means "contract-independent" — applies to
+any active contract on the rate plan. Most-specific-wins
+resolution at pricing time: `(contract + season)` → `(contract)`
+→ `(supplier + hotel)`. `rate_auth_base_price`,
+`rate_auth_tax_component`, and `rate_auth_allotment` do not take
+contract columns — see ADR-021 amendment for reasoning.
+
+#### Promotion overlay (`rate_promotion*`)
+
+Promotions apply to authored rates only. Sourced offers carry
+supplier-driven discounts inside `offer_sourced_component(DISCOUNT)`;
+overlaying our own promotions on sourced supply is a pricing-rule
+/ merchandising concern (ADR-004 / ADR-009), not ADR-021.
+
+- `RatePromotion` — one row per named promotion. Fields:
+  `(tenant, supplier, canonical_hotel?, contract_id?, code, name,
+  description?, discount_kind ∈ {PERCENT,
+  FIXED_AMOUNT_PER_NIGHT, FIXED_AMOUNT_PER_STAY, NTH_NIGHT_FREE},
+  discount_value?, discount_amount_minor_units?, discount_currency?,
+  applies_to ∈ {PRE_SUPPLEMENT_BASE, POST_SUPPLEMENT_PRE_TAX,
+  POST_TAX}, stay_window_from/to, booking_window_from/to,
+  min_nights?, max_nights?, min_advance_days?, max_advance_days?,
+  priority, stackable, max_total_uses?, used_count, status ∈
+  {DRAFT, ACTIVE, PAUSED, EXHAUSTED, EXPIRED, ARCHIVED})`. Default
+  `applies_to = POST_SUPPLEMENT_PRE_TAX` — discount lands on the
+  room+supplements subtotal before tax. Default `stackable = FALSE`;
+  lower `priority` evaluates first.
+- `RatePromotionScope` — per-dimension narrowing. One row per
+  `(promotion_id, scope_dimension ∈ {ROOM_TYPE, RATE_PLAN,
+  MEAL_PLAN, SEASON, DATE_BAND})` + the matching nullable FK
+  (`room_type_id?`, `rate_plan_id?`, `meal_plan_id?`, `season_id?`,
+  `date_band_id?`). Same-dimension rows OR, cross-dimension rows
+  AND. Absent scope rows for a dimension means any value.
+- `RatePromotionRule` — extensible rules not cleanly covered by
+  `RatePromotion` columns. `rule_kind ∈ {ELIGIBILITY, EXCLUSION,
+  STACKING, CAP}` + whitelisted-per-kind `params JSONB`. Examples:
+  `STACKING { stackable_with: [...] }`, `CAP { max_discount_amount_minor_units }`,
+  `ELIGIBILITY { account_types: ["B2C"] }`.
+
+**Restrictions stay separate.** STOP_SELL, CTA, CTD, MIN/MAX LOS,
+advance-purchase windows, release/cutoff continue to live in
+`rate_auth_restriction` (ADR-021 v1). Restrictions gate
+**availability**; promotions change **price**. A STOP_SELL wins
+over the most generous promotion.
+
+#### Copy-season workflow
+
+A server-side transactional service (not a new table). Given
+`source_season_id`, `target_contract_id`, and a `date_shift`, it
+clones the season, date bands, and `ACTIVE` contract prices in one
+transaction. New season starts in `DRAFT` — explicit operator
+activation required. Audit via `copied_from_season_id` /
+`copied_at` / `copied_by_ref` on the row plus an `AuditLog`
+`SEASON_COPY` entry. Secondary primitives (extra-person rules,
+meal supplements, restrictions, cancel policies) are cloned only
+if an operator flag requests it; default is not to clone.
+
+#### Booking-time snapshot extension (additive)
+
+`BookingAuthoredRateSnapshot` gains (additively): `authoring_mode`,
+`contract_id?`, `contract_code?`, `season_id?`, `season_code?` (per
+stay night — a stay crossing a season boundary records per-night
+season resolution), and `applied_promotions_jsonb` (per-promo
+lines with `promotion_id`, `applied_amount`, `currency`,
+`applies_to`, `priority`, `stacked_with[]`). Downstream consumers
+remain shape-agnostic.
+
+### Booking-time snapshots (`booking_*`)
+
+All immutable post-confirmation. Corrections flow through ADR-016
+credit/debit notes.
+
+- `BookingSourcedOfferSnapshot` — frozen copy of the chosen
+  `SourcedOfferSnapshot` + component rows.
+- `BookingAuthoredRateSnapshot` — resolved primitives materialized
+  at confirmation (base per night + supplements + tax/fee lines +
+  authored cancellation policy version pointer).
+- `BookingCancellationPolicySnapshot` — source-agnostic structured
+  timeline; `captured_from ∈ {SUPPLIER_STRUCTURED,
+  SUPPLIER_PROSE_PARSED, AUTHORED_POLICY}`.
+- `BookingTaxFeeSnapshot` — per-line tax + fee rows (including
+  zero-rate lines) used by `TAX_INVOICE` generation (ADR-016).
+
+Exactly one of `BookingSourcedOfferSnapshot` /
+`BookingAuthoredRateSnapshot` is present per `Booking`; the
+cancellation-policy and tax/fee snapshots are always present post-
+confirmation.
+
 ## Direct-connect supply (ADR-013)
 
 - `DirectConnectProperty` — per (tenant, supplier, property code)
@@ -380,11 +603,13 @@ Table prefixes communicate which module owns what:
 | Prefix | Owner module | Examples |
 |---|---|---|
 | `core_` | tenancy/domain | `core_tenant`, `core_account`, `core_user` |
-| `hotel_` | content/mapping | `hotel_canonical`, `hotel_supplier`, `hotel_mapping`, `hotel_image` |
+| `hotel_` | content/mapping | `hotel_canonical`, `hotel_supplier`, `hotel_mapping`, `hotel_image`, `hotel_room_type`, `hotel_rate_plan`, `hotel_meal_plan`, `hotel_occupancy_template`, `hotel_child_age_band`, `hotel_room_mapping`, `hotel_rate_plan_mapping`, `hotel_meal_plan_mapping`, `hotel_occupancy_mapping` (ADR-021) |
 | `supply_` | supplier | `supply_supplier`, `supply_connection`, `supply_direct_contract`, `supply_ingested_rate`, `supply_direct_connect_property` |
+| `rate_` | supply (ADR-021) | `rate_auth_base_price`, `rate_auth_extra_person_rule`, `rate_auth_meal_supplement`, `rate_auth_tax_component`, `rate_auth_fee_component`, `rate_auth_restriction`, `rate_auth_allotment`, `rate_auth_cancellation_policy`, `rate_contract`, `rate_contract_season`, `rate_contract_season_date_band`, `rate_contract_price`, `rate_promotion`, `rate_promotion_scope`, `rate_promotion_rule` (ADR-021 amendment 2026-04-23) |
+| `offer_` | supply (ADR-021) | `offer_sourced_snapshot`, `offer_sourced_component`, `offer_sourced_restriction`, `offer_sourced_cancellation_policy` |
 | `pricing_` | pricing | `pricing_rule`, `pricing_fx_rate` |
 | `merch_` | merchandising | `merch_campaign`, `merch_placement` |
-| `booking_` | booking | `booking_booking`, `booking_saga`, `booking_voucher`, `booking_tender` |
+| `booking_` | booking | `booking_booking`, `booking_saga`, `booking_voucher`, `booking_tender`, `booking_sourced_offer_snapshot`, `booking_authored_rate_snapshot`, `booking_cancellation_policy_snapshot`, `booking_tax_fee_snapshot` (ADR-021) |
 | `ledger_` | ledger | `ledger_entry`, `ledger_wallet_account`, `ledger_balance_snapshot` |
 | `pay_` | payments | `pay_intent`, `pay_stripe_event`, `pay_credit_line`, `pay_invoice`, `pay_payout_batch`, `pay_payout_account`, `pay_withdrawal_request`, `pay_reserve_balance`, `pay_refund_liability_rule` |
 | `reward_` | rewards | `reward_earn_rule`, `reward_posting`, `reward_funding_leg`, `reward_campaign`, `reward_hotel_override`, `reward_override_audit`, `reward_referral_code`, `reward_referral_invite`, `reward_fraud_decision`, `reward_tender_policy` |

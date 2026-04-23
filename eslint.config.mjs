@@ -23,6 +23,7 @@ const ALL_BB = [
   '@bb/rate-intelligence',
   '@bb/ui',
   '@bb/config',
+  '@bb/db',
   '@bb/testing',
 ];
 
@@ -35,6 +36,7 @@ const BACKEND_INTERNAL = [
   '@bb/reseller',
   '@bb/supplier-contract',
   '@bb/rate-intelligence',
+  '@bb/db',
 ];
 
 function forbid(allowed, message) {
@@ -156,6 +158,16 @@ export default tsEslint.config(
       'no-restricted-imports': [
         'error',
         { patterns: forbid(['@bb/domain', '@bb/ledger', '@bb/reseller', '@bb/documents'], "packages/documents may only depend on @bb/domain, @bb/ledger, and @bb/reseller. Remove '{name}'.") },
+      ],
+    },
+  },
+  {
+    // db: no @bb dependencies — pure pg.Pool wrapper, no domain coupling
+    files: ['packages/db/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { patterns: forbid(['@bb/db'], "packages/db has no @bb dependencies. Remove '{name}'.") },
       ],
     },
   },

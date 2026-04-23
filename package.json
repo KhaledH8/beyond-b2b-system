@@ -15,10 +15,17 @@
     "clean": "turbo run clean",
     "db:up": "docker compose -f infra/docker/docker-compose.yml up -d",
     "db:down": "docker compose -f infra/docker/docker-compose.yml down",
-    "db:logs": "docker compose -f infra/docker/docker-compose.yml logs -f"
+    "db:logs": "docker compose -f infra/docker/docker-compose.yml logs -f",
+    "db:migrate": "tsx infra/migrate.ts",
+    "db:rollback": "tsx infra/rollback.ts"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^15.0.0",
+    "@types/pg": "^8.11.0",
+    "dotenv": "^16.4.0",
+    "knex": "^3.1.0",
+    "pg": "^8.12.0",
+    "tsx": "^4.19.0",
     "vitest": "^2.1.0",
     "typescript-eslint": "^8.0.0",
     "eslint": "^9.0.0",

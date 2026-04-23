@@ -9,12 +9,14 @@
     "experimentalDecorators": true,
     "paths": {
       "@bb/domain": ["../../packages/domain/src/index.ts"],
-      "@bb/config": ["../../packages/config/src/index.ts"]
+      "@bb/config": ["../../packages/config/src/index.ts"],
+      "@bb/db": ["../../packages/db/src/index.ts"]
     }
   },
   "references": [
     { "path": "../../packages/domain" },
-    { "path": "../../packages/config" }
+    { "path": "../../packages/config" },
+    { "path": "../../packages/db" }
   ],
   "include": ["src"],
   "exclude": ["node_modules", "dist"]

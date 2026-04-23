@@ -10,6 +10,87 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-021 2026-04-22** — rate, offer, restriction, and
+      occupancy model. Three layers kept separate: canonical product
+      dimensions (`hotel_room_type`, `hotel_rate_plan`,
+      `hotel_meal_plan`, `hotel_occupancy_template`,
+      `hotel_child_age_band` + four `*_mapping` tables), authored
+      rate primitives (`rate_auth_*` — base price, extra-person
+      rule, meal supplement, tax/fee components, restriction,
+      allotment, cancellation policy), and sourced offer snapshots
+      (`offer_sourced_snapshot`, `offer_sourced_component`,
+      `offer_sourced_restriction`,
+      `offer_sourced_cancellation_policy`). New enums
+      `OfferShape ∈ {SOURCED_COMPOSED, AUTHORED_PRIMITIVES,
+      HYBRID_AUTHORED_OVERLAY}` and
+      `RateBreakdownGranularity ∈ {TOTAL_ONLY, PER_NIGHT_TOTAL,
+      PER_NIGHT_COMPONENTS, PER_NIGHT_COMPONENTS_TAX,
+      AUTHORED_PRIMITIVES}`. Shared `RestrictionKind` enum across
+      authored and sourced shapes. Booking-time snapshots
+      (`booking_sourced_offer_snapshot`,
+      `booking_authored_rate_snapshot`,
+      `booking_cancellation_policy_snapshot`,
+      `booking_tax_fee_snapshot`) immutable, written in the
+      `CONFIRMED` transaction. Amends ADR-002, ADR-003 (adapter
+      declares `offer_shape` + `min_rate_breakdown_granularity` in
+      meta; `SupplierRate` carries the shape fields), ADR-004
+      (pricing evaluator gains `SOURCED_COMPOSED` and
+      `AUTHORED_PRIMITIVES` code paths; pricing trace carries
+      shape + granularity), ADR-010 (snapshots written in same
+      transaction as `CONFIRMED`), ADR-011 (new `rate_` and
+      `offer_` prefixes; `hotel_` / `booking_` extended), ADR-013
+      (authored-primitives push writes `rate_auth_*`; composed push
+      continues `supply_ingested_rate`).
+- [x] Update `docs/data-model/entities.md` — canonical product
+      dimensions, sourced-offer snapshot entities, authored-rate
+      primitive entities, booking-time snapshot entities; extended
+      table-prefix ownership rows.
+- [x] Amend `docs/adrs/ADR-011-monorepo-structure.md` — new `rate_`
+      and `offer_` prefixes; `hotel_` and `booking_` row extensions;
+      infra/migrations layout additions for `rates/` and `offers/`.
+- [x] Amend `docs/roadmap.md` — Phase 0 adds ADR-021; Phase 1 ships
+      rate-model migrations (canonical dims + mappings + sourced-
+      offer snapshot tables) **before** the Hotelbeds adapter;
+      Phase 2 adds booking-time snapshot tables (sourced write path
+      + empty authored target); Phase 3 adds `rate_auth_*` tables
+      and the authored booking-snapshot write path.
+- [x] Amend `CLAUDE.md` §9 (compact checklist item 12) and §10
+      (two new invariants: authored-vs-sourced shape separation;
+      booking-time snapshots immutable, live shape stays on supply
+      side).
+- [x] **ADR-021 amendment 2026-04-23** — static seasonal contract-
+      rate layer + promotion overlay for authored rates. New
+      `AuthoringMode ∈ {SEASONAL_CONTRACT, PER_DAY_STREAM}` under
+      `OfferShape = AUTHORED_PRIMITIVES`. New entities:
+      `rate_contract`, `rate_contract_season`,
+      `rate_contract_season_date_band`, `rate_contract_price`,
+      `rate_promotion`, `rate_promotion_scope`,
+      `rate_promotion_rule`. Optional nullable `contract_id?` /
+      `season_id?` narrowing columns added (additive) to
+      `rate_auth_extra_person_rule`, `rate_auth_meal_supplement`,
+      `rate_auth_restriction`, `rate_auth_cancellation_policy`,
+      and `contract_id?` on `rate_auth_fee_component`.
+      `rate_auth_base_price`, `rate_auth_tax_component`, and
+      `rate_auth_allotment` do not take contract columns.
+      Promotion behavior: `discount_kind ∈ {PERCENT,
+      FIXED_AMOUNT_PER_NIGHT, FIXED_AMOUNT_PER_STAY,
+      NTH_NIGHT_FREE}`; `applies_to ∈ {PRE_SUPPLEMENT_BASE,
+      POST_SUPPLEMENT_PRE_TAX, POST_TAX}` (default
+      `POST_SUPPLEMENT_PRE_TAX`); stay / booking windows;
+      priority; stackable with per-pair STACKING rules.
+      Restrictions stay separate in `rate_auth_restriction`.
+      Copy-season is a transactional service with
+      `copied_from_season_id` lineage + `AuditLog SEASON_COPY`
+      entry; new season starts in `DRAFT`. Sourced offers
+      untouched.
+- [x] Update `docs/data-model/entities.md` with seasonal contract
+      entities, promotion entities, copy-season workflow note, and
+      `BookingAuthoredRateSnapshot` additive fields. Extended
+      `rate_` prefix row.
+- [x] Amend `docs/adrs/ADR-011-monorepo-structure.md` `rate_`
+      prefix row with the seven new tables.
+- [x] Amend `docs/roadmap.md` Phase 3 — seasonal contract +
+      promotion migrations land before the direct-paper adapter.
 - [x] Create foundational repo docs: CLAUDE.md, README.md, TASKS.md,
       docs/architecture/overview.md, docs/adrs/ADR-001-foundation.md,
       docs/prompts/session-start.md, .gitignore baseline.
@@ -247,12 +328,54 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
       Root `vitest.config.ts` with `passWithNoTests: true` covers
       all packages; root `"test": "vitest run"` for Phase 0
       (switch back to `turbo run test` in Phase 1 when real tests exist).
+- [x] Database tooling baseline — `packages/db` (pg.Pool factory),
+      Knex migration runner (`infra/knexfile.ts` + custom
+      `ModuleMigrationSource` across module subdirs), `pnpm db:migrate`
+      / `pnpm db:rollback` scripts, `DatabaseModule` wired into
+      `apps/api`. Migration files:
+        `core/20260422000001_core_baseline.ts`   → core_tenant, core_account
+        `supply/20260422000002_supply_baseline.ts` → supply_supplier (FK dep)
+        `hotel/20260422000003_hotel_baseline.ts`  → hotel_canonical,
+          hotel_supplier, hotel_mapping (PostGIS GIST indexes)
+        `booking/20260422000004_booking_shell.ts` → booking_booking
+          (ADR-020 triple immutable at confirmation)
 - [ ] OpenTelemetry wiring — Pino logger + OTel trace/metric
       providers in `apps/api` and `apps/worker`.
-- [ ] First migration files — core tenant, account, and hotel
-      tables (prefix: `core_`, `hotel_`) in `infra/migrations/`.
+- [x] **Rate-model Phase 1 migrations (ADR-021) — unblocks Hotelbeds
+      adapter.** Files:
+        `rates/20260423000005_rates_canonical_product_dimensions.ts` →
+          `hotel_room_type`, `hotel_rate_plan`, `hotel_meal_plan`
+          (canonical_hotel_id nullable for platform-global RO/BB/HB/FB/AI
+          with partial unique indexes), `hotel_occupancy_template`
+          (global + rate-plan-narrowed partial uniques),
+          `hotel_child_age_band`
+        `rates/20260423000006_rates_product_dimension_mappings.ts` →
+          `hotel_room_mapping`, `hotel_rate_plan_mapping`,
+          `hotel_meal_plan_mapping` (supplier-global, no
+          supplier_hotel_id), `hotel_occupancy_mapping`
+          (COALESCE partial unique handles nullable occupancy code).
+          All mappings follow the ADR-008 convention: partial unique
+          excluding `REJECTED | SUPERSEDED`, `superseded_by_id` chain,
+          `mapping_method ∈ {DETERMINISTIC, FUZZY, MANUAL}`,
+          `status ∈ {PENDING, CONFIRMED, REJECTED, SUPERSEDED}`.
+        `offers/20260423000007_offers_sourced_offer_snapshots.ts` →
+          `offer_sourced_snapshot` (TTL index on `valid_until`,
+          `rate_breakdown_granularity` constrained to the four
+          sourced values; `AUTHORED_PRIMITIVES` rejected at this
+          layer), `offer_sourced_component` (ON DELETE CASCADE),
+          `offer_sourced_restriction` (ON DELETE CASCADE),
+          `offer_sourced_cancellation_policy` (1:1 with snapshot,
+          `parsed_with` preserves parser id+version for future
+          re-parsing).
+      No `rate_auth_*` tables yet (Phase 3). No booking-time
+      snapshot tables yet (Phase 2).
 - [ ] Hotelbeds adapter — `packages/adapters/hotelbeds/` implementing
-      `SupplierAdapter`; must pass the conformance suite.
+      `SupplierAdapter`; must pass the conformance suite. Declares
+      `offer_shape = SOURCED_COMPOSED` and
+      `min_rate_breakdown_granularity = TOTAL_ONLY` (ADR-021);
+      `searchAvailability` writes `offer_sourced_snapshot` +
+      `offer_sourced_cancellation_policy` + raw-payload object-
+      storage persistence per response.
 - [ ] Adapter conformance suite — implement in `packages/testing/`
       alongside the first adapter (ADR-003).
 - [ ] Hotel mapping pipeline — deterministic match phase
@@ -265,6 +388,42 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 - [ ] Supplier notes: `docs/suppliers/hotelbeds.md`,
       `webbeds.md`, `tbo.md`.
 - [ ] Flow docs: `docs/flows/search.md`, `docs/flows/booking.md`.
+
+## Later (Phase 3 — pre-adapter order for direct rates)
+
+These are not active-session tasks. They are recorded here so that
+the ordering is explicit and not lost when Phase 3 begins. Full
+Phase 3 scope lives in `docs/roadmap.md`.
+
+- [ ] **Seasonal-contract + promotion migrations (ADR-021
+      amendment 2026-04-23) — lands before the direct-paper
+      adapter implementation in Phase 3.** Migration files under
+      `infra/migrations/rates/`:
+        `NNNN_rate_contract.ts` → `rate_contract`,
+          `rate_contract_season`, `rate_contract_season_date_band`,
+          `rate_contract_price`
+        `NNNN_rate_promotion.ts` → `rate_promotion`,
+          `rate_promotion_scope`, `rate_promotion_rule`
+        `NNNN_rate_auth_contract_columns.ts` → additive nullable
+          `contract_id?` / `season_id?` on `rate_auth_extra_person_rule`,
+          `rate_auth_meal_supplement`, `rate_auth_restriction`,
+          `rate_auth_cancellation_policy`; `contract_id?` on
+          `rate_auth_fee_component`. No backfill — these tables
+          are empty until Phase 3.
+      Booking snapshot additive columns (`authoring_mode`,
+      `contract_id?`, `season_id?`, `applied_promotions_jsonb`) on
+      `booking_authored_rate_snapshot` land in the same batch.
+- [ ] Copy-season service (transactional clone;
+      `copied_from_season_id` lineage + `AuditLog SEASON_COPY`
+      entry; new season starts `DRAFT`). No operator UI yet.
+- [ ] Direct-paper adapter implements `SupplierAdapter` with
+      `authoring_mode = SEASONAL_CONTRACT`,
+      `supports_seasonal_contracts = true`,
+      `supports_promotions = true`, `offer_shape =
+      AUTHORED_PRIMITIVES`; composes offers at search time from
+      `rate_contract_price` + extra-person/meal supplements + tax
+      + fee, applies promotions per `applies_to` order, writes
+      `booking_authored_rate_snapshot` at `CONFIRMED`.
 
 ## Later (beyond Phase 0)
 

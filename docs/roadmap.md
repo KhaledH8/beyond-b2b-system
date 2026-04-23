@@ -27,6 +27,7 @@ shippable in isolation (internally, not necessarily to end users).
 - [x] ADR-017 reseller billing, resale controls, branded documents
 - [x] ADR-018 reseller collections, balances, reserves, and payouts
 - [x] ADR-020 collection mode and supplier settlement mode
+- [x] ADR-021 rate, offer, restriction, and occupancy model
 - [ ] Repo scaffolding (monorepo shell, CI baseline, tsconfig base,
       ESLint, dependency-direction rules)
 - [ ] Local dev env (Docker Compose: Postgres + PostGIS, Redis, object
@@ -43,9 +44,25 @@ one aggregator.
 
 - Supplier contract package (ADR-003) with types and the conformance
   test harness.
+- **Rate-model migrations (ADR-021) — ships before the Hotelbeds
+  adapter.** Canonical product dimensions (`hotel_room_type`,
+  `hotel_rate_plan`, `hotel_meal_plan`, `hotel_occupancy_template`,
+  `hotel_child_age_band`), the four mapping tables
+  (`hotel_room_mapping`, `hotel_rate_plan_mapping`,
+  `hotel_meal_plan_mapping`, `hotel_occupancy_mapping`), and the
+  sourced-offer snapshot tables (`offer_sourced_snapshot`,
+  `offer_sourced_component`, `offer_sourced_restriction`,
+  `offer_sourced_cancellation_policy`). No authored-rate
+  (`rate_auth_*`) tables yet — Phase 3. No booking-time snapshot
+  tables yet — Phase 2.
 - First adapter: **Hotelbeds** — `listHotels`, `getHotelContent`,
   `listHotelImages`, `searchAvailability`, `quoteRate`, health check.
-  Sandbox credentials configured.
+  Sandbox credentials configured. Declares
+  `offer_shape = SOURCED_COMPOSED` and
+  `min_rate_breakdown_granularity = TOTAL_ONLY` (ADR-021); every
+  `searchAvailability` response writes one `offer_sourced_snapshot`
+  row plus `offer_sourced_cancellation_policy` (structured +
+  verbatim prose); raw payload hashed + persisted to object storage.
 - Canonical hotel + `SupplierHotel` + `HotelMapping` tables.
 - Deterministic mapping only (code match, geo+name exact/tight).
   Fuzzy queue is populated but no review UI yet.
@@ -80,6 +97,13 @@ with the wallet ledger standing up and basic loyalty earning.
 - Booking saga (ADR-010) with all steps and compensations (including
   new `TENDER_RESOLVED` and `REWARDS_ACCRUED` steps), BullMQ workers,
   state machine in Postgres.
+- **Booking-time snapshot tables (ADR-021):**
+  `booking_sourced_offer_snapshot`,
+  `booking_cancellation_policy_snapshot`, and
+  `booking_tax_fee_snapshot` (write paths for sourced bookings).
+  `booking_authored_rate_snapshot` table schema ships as an empty
+  target so migrations are stable; no write path until Phase 3.
+  Snapshots are written in the same transaction as `CONFIRMED`.
 - **Internal ledger (ADR-012):** `LedgerEntry`, `WalletAccount`,
   balance views. `CASH_WALLET` and `PROMO_CREDIT` books only in this
   phase.
@@ -154,6 +178,28 @@ connection live; B2B credit operable.
 - First direct contract live via the direct-contract (paper) adapter.
 - **First direct-connect adapter: SynXis Channel Connect (ADR-013).**
   Content + ARI + reservation + change discovery. One pilot property.
+- **Authored-rate primitives (ADR-021):** `rate_auth_base_price`,
+  `rate_auth_extra_person_rule`, `rate_auth_meal_supplement`,
+  `rate_auth_tax_component`, `rate_auth_fee_component`,
+  `rate_auth_restriction`, `rate_auth_allotment`,
+  `rate_auth_cancellation_policy` migrations ship with the first
+  direct-connect adapter. Write path for
+  `booking_authored_rate_snapshot` lights up. Pricing evaluator
+  gains the `AUTHORED_PRIMITIVES` code path.
+- **Seasonal contracts and promotions (ADR-021 amendment
+  2026-04-23) — lands before the direct-paper adapter within
+  Phase 3.** Migrations: `rate_contract`, `rate_contract_season`,
+  `rate_contract_season_date_band`, `rate_contract_price`,
+  `rate_promotion`, `rate_promotion_scope`, `rate_promotion_rule`;
+  additive nullable `contract_id?` / `season_id?` columns on the
+  four `rate_auth_*` tables that support narrow scoping
+  (extra-person rule, meal supplement, restriction, cancellation
+  policy) plus `contract_id?` on fee component. `BookingAuthoredRateSnapshot`
+  gains `authoring_mode`, `contract_id?`, `season_id?`, and
+  `applied_promotions_jsonb` (additive). Copy-season service and
+  operator UI are Phase 3 admin surface; pricing evaluator gains
+  the `SEASONAL_CONTRACT` sub-path within `AUTHORED_PRIMITIVES`,
+  including promotion stacking and `applies_to` ordering.
 - Merchandising: `MerchandisingCampaign`, placements, boost cap
   configuration, sponsored-slot disclosure.
 - Ranking module: price-first, with relevance and quality signals,
