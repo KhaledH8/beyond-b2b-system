@@ -483,13 +483,49 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
           the first step of the booking saga (Phase 2).
         - `pnpm lint`, `pnpm typecheck`, `pnpm build` clean across
           the full workspace (25 / 25 / 18).
+- [x] **Hotelbeds fixture-replay conformance path** —
+      `createFixtureHotelbedsClient` in `@bb/testing` implements
+      `HotelbedsClient` against two recorded JSON payloads
+      (`packages/testing/src/hotelbeds/fixtures/hotels-page-01.json`,
+      `availability-01.json`; two hotels, one room, one NRF + one
+      FLEX rate) with deterministic raw bytes for content-addressed
+      MinIO writes. Conformance test under
+      `apps/api/src/adapters/hotelbeds/__tests__/hotelbeds.conformance.test.ts`
+      drives `runHotelContentSync` + `runSourcedSearchAndPersist`
+      against the live local stack (Postgres + MinIO) and asserts:
+        - `supply_supplier` row present (`hotelbeds`, AGGREGATOR).
+        - `hotel_supplier` rows for both fixture hotels.
+        - `offer_sourced_snapshot` rows (one per rate) with
+          `rate_breakdown_granularity = TOTAL_ONLY`, currency EUR,
+          raw_payload_hash matching sha256, storage_ref under
+          `hotelbeds/availability/`.
+        - `offer_sourced_cancellation_policy` written only for the
+          rate that actually disclosed one (ADR-021 no-fabrication
+          invariant visible in assertions).
+        - One `hotel_room_mapping`, two `hotel_rate_plan_mapping`
+          (FLEX + NRF), two `hotel_meal_plan_mapping` (BB + RO),
+          one `hotel_occupancy_mapping` row observed.
+        - Raw payload roundtrips from MinIO via
+          `GetObjectCommand` at the snapshot's `storage_ref`.
+        - No `rate_auth_*` tables present in this phase
+          (invariant: sourced writes never touch authored tables).
+        - Every projected `AdapterSupplierRate` carries
+          `moneyMovementProvenance = 'PROVISIONAL'` and
+          `assertRateBookable(rate)` throws
+          `ProvisionalMoneyMovementError`.
+      Test skips cleanly when `DATABASE_URL` is absent so CI
+      without a local stack is not broken. `pnpm typecheck`,
+      `pnpm lint`, and `pnpm test` green.
 - [ ] **Hotelbeds adapter live wiring (Phase 2)** — real HTTP client
       with signing + retry/back-pressure (replaces the stub),
-      recorded-fixtures suite under `packages/testing`, booking
-      confirmation (feeds the booking saga from ADR-010),
-      cancellation, worker-side content-sync cron.
-- [ ] Adapter conformance suite — implement in `packages/testing/`
-      alongside the first adapter (ADR-003).
+      booking confirmation (feeds the booking saga from ADR-010),
+      cancellation, worker-side content-sync cron. Fixture-replay
+      path above stays as the regression harness; once live HTTP
+      lands, additional fixtures recorded from the real API feed
+      into the same conformance suite.
+- [ ] Adapter conformance suite — formalize ADR-003 conformance
+      harness in `packages/testing/` (applies to every adapter;
+      Hotelbeds fixture-replay is the first implementation).
 - [ ] Hotel mapping pipeline — deterministic match phase
       (`packages/mapping/`).
 - [ ] Supplier content merge — static pipeline into

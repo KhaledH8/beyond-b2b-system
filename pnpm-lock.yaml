@@ -115,6 +115,9 @@ importers:
         specifier: ^7.8.0
         version: 7.8.2
     devDependencies:
+      '@bb/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       '@nestjs/cli':
         specifier: ^10.4.0
         version: 10.4.9
@@ -130,6 +133,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
+      dotenv:
+        specifier: ^16.4.0
+        version: 16.6.1
       rimraf:
         specifier: ^6.0.0
         version: 6.1.3
@@ -430,6 +436,9 @@ importers:
 
   packages/testing:
     dependencies:
+      '@bb/adapter-hotelbeds':
+        specifier: workspace:*
+        version: link:../adapters/hotelbeds
       '@bb/domain':
         specifier: workspace:*
         version: link:../domain

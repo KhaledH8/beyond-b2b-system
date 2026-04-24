@@ -19,3 +19,10 @@ export function money(amount: string, currency: CurrencyCode = 'USD'): Money {
  */
 export const ADAPTER_CONFORMANCE_SUITE_PLACEHOLDER =
   'Conformance suite: implement in Phase 1 alongside the first adapter.';
+
+// Hotelbeds fixture-replay helpers (Phase 1 conformance path).
+export {
+  createFixtureHotelbedsClient,
+  HOTELBEDS_FIXTURES,
+} from './hotelbeds/index';
+export type { HotelbedsFixtures } from './hotelbeds/index';

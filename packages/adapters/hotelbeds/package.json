@@ -2,8 +2,8 @@
   "name": "@bb/adapter-hotelbeds",
   "version": "0.0.0",
   "private": true,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
@@ -19,5 +19,8 @@
     "@types/node": "^22.0.0",
     "rimraf": "^6.0.0",
     "vitest": "^2.1.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

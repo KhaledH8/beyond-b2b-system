@@ -1,0 +1,32 @@
+{
+  "hotels": [
+    {
+      "code": "1000073",
+      "currency": "EUR",
+      "rooms": [
+        {
+          "code": "DBL.ST",
+          "rates": [
+            {
+              "rateKey": "20260601|20260603|W|1|1000073|DBL.ST|NRF|RO||1~2~0||N@-120.50",
+              "rateClass": "NRF",
+              "rateType": "BOOKABLE",
+              "net": "120.50",
+              "boardCode": "RO",
+              "cancellationPolicies": [
+                { "amount": "120.50", "from": "2026-05-30T23:59:59+02:00" }
+              ]
+            },
+            {
+              "rateKey": "20260601|20260603|W|1|1000073|DBL.ST|FLEX|BB||1~2~0||N@-155.00",
+              "rateClass": "FLEX",
+              "rateType": "BOOKABLE",
+              "net": "155.00",
+              "boardCode": "BB"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

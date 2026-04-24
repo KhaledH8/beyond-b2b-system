@@ -8,20 +8,51 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "paths": {
-      "@bb/domain": ["../../packages/domain/src/index.ts"],
-      "@bb/config": ["../../packages/config/src/index.ts"],
-      "@bb/db": ["../../packages/db/src/index.ts"],
-      "@bb/supplier-contract": ["../../packages/supplier-contract/src/index.ts"],
-      "@bb/adapter-hotelbeds": ["../../packages/adapters/hotelbeds/src/index.ts"]
+      "@bb/domain": [
+        "../../packages/domain/src/index.ts"
+      ],
+      "@bb/config": [
+        "../../packages/config/dist"
+      ],
+      "@bb/db": [
+        "../../packages/db/dist"
+      ],
+      "@bb/supplier-contract": [
+        "../../packages/supplier-contract/dist"
+      ],
+      "@bb/adapter-hotelbeds": [
+        "../../packages/adapters/hotelbeds/dist"
+      ],
+      "@bb/testing": [
+        "../../packages/testing/dist"
+      ]
     }
   },
   "references": [
-    { "path": "../../packages/domain" },
-    { "path": "../../packages/config" },
-    { "path": "../../packages/db" },
-    { "path": "../../packages/supplier-contract" },
-    { "path": "../../packages/adapters/hotelbeds" }
+    {
+      "path": "../../packages/domain"
+    },
+    {
+      "path": "../../packages/config"
+    },
+    {
+      "path": "../../packages/db"
+    },
+    {
+      "path": "../../packages/supplier-contract"
+    },
+    {
+      "path": "../../packages/adapters/hotelbeds"
+    },
+    {
+      "path": "../../packages/testing"
+    }
   ],
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

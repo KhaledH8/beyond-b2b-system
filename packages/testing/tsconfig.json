@@ -8,10 +8,15 @@
     "composite": true,
     "paths": {
       "@bb/domain": ["../domain/src/index.ts"],
-      "@bb/supplier-contract": ["../supplier-contract/src/index.ts"]
+      "@bb/supplier-contract": ["../supplier-contract/src/index.ts"],
+      "@bb/adapter-hotelbeds": ["../adapters/hotelbeds/src/index.ts"]
     }
   },
-  "references": [{ "path": "../domain" }, { "path": "../supplier-contract" }],
-  "include": ["src"],
+  "references": [
+    { "path": "../domain" },
+    { "path": "../supplier-contract" },
+    { "path": "../adapters/hotelbeds" }
+  ],
+  "include": ["src/**/*.ts", "src/**/*.json"],
   "exclude": ["node_modules", "dist"]
 }

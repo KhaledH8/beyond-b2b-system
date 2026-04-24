@@ -1,0 +1,29 @@
+{
+  "hotels": [
+    {
+      "code": "1000073",
+      "name": "Fixture Hotel Alpha",
+      "countryCode": "ES",
+      "address": {
+        "content": "Carrer de Mallorca 401",
+        "postalCode": "08013"
+      },
+      "city": { "content": "Barcelona" },
+      "coordinates": { "latitude": 41.4036, "longitude": 2.1744 },
+      "categoryCode": "4EST",
+      "chainCode": "FX"
+    },
+    {
+      "code": "1000074",
+      "name": "Fixture Hotel Beta",
+      "countryCode": "FR",
+      "address": {
+        "content": "3 Rue de Rivoli",
+        "postalCode": "75004"
+      },
+      "city": { "content": "Paris" },
+      "coordinates": { "latitude": 48.8566, "longitude": 2.3522 },
+      "categoryCode": "3EST"
+    }
+  ]
+}
