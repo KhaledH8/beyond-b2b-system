@@ -650,9 +650,91 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
           additive, not load-bearing in prod.
         - `pnpm typecheck` (27/27), `pnpm lint` (26/26),
           `pnpm test` (12/12 across 3 files) green.
-- [ ] Public search API endpoint — account-aware (B2C / B2B / etc.),
-      with pricing engine + merchandising. Distinct from the internal
-      seam above, which is dev/ops only.
+- [x] **Channel-aware search + first-slice pricing** — normalized
+      search seam above sourced offers (`offer_sourced_snapshot`)
+      that drives the four commercial channels (B2C / AGENCY /
+      SUBSCRIBER / CORPORATE) through one contract.
+        - Migrations:
+            - `infra/migrations/pricing/20260427000001_pricing_markup_rule.ts`
+              — three precedence scopes (ACCOUNT / HOTEL / CHANNEL)
+              with a CHECK enforcing exactly one scope key per row.
+              Time-bound (`valid_from`, `valid_to`); status-gated;
+              partial indexes for the four hot lookup paths and for
+              the TTL sweeper.
+            - `infra/migrations/merchandising/20260427000002_merchandising_promotion.ts`
+              — `PROMOTED | RECOMMENDED | FEATURED` tags scoped to a
+              `supplier_hotel_id`, optional `account_type` channel
+              filter, identical time-bound + status pattern.
+        - Domain types (`packages/domain/src/pricing.ts`):
+            - `MarkupRuleScope`, `MarkupRuleSnapshot` (operational
+              shape the evaluator sees), `AccountContext`,
+              `PriceQuote`, `AppliedMarkup`.
+            - Search contract: `SearchRequest`, `SearchResponse`,
+              `SearchResultHotel`, `SearchResultRate`, `PromotionTag`,
+              `SearchOccupancy`, `SearchResponseMeta`.
+        - `packages/pricing` — new package, pure (no DB):
+            - `money.ts` — BigInt minor-unit helpers + percent markup
+              with half-away-from-zero rounding; rejects malformed
+              decimal strings.
+            - `evaluator.ts` — `evaluateSourcedOffer(offer, rules, ctx)`:
+              precedence ACCOUNT > HOTEL > CHANNEL, priority breaks
+              ties within scope, deterministic id tie-break. Returns
+              `EvaluatedOffer` (price quote + trace). Unknown
+              `markupKind` values are skipped — adding a kind is
+              additive.
+            - `evaluator.test.ts` — 10 unit tests cover money
+              round-trip, sub-percent precision, scope precedence,
+              priority tie-break, multi-tenant isolation, unknown-
+              kind fallthrough.
+            - ESLint rule: `@bb/pricing` may depend on `@bb/domain`
+              only (and later `@bb/rate-intelligence`). `@bb/pricing`
+              is added to `BACKEND_INTERNAL` so frontend apps never
+              import it.
+        - `apps/api/src/search/` — channel-aware search module:
+            - Four Pg repositories: `PgAccountRepository`,
+              `PgHotelSupplierRepository`, `PgMarkupRuleRepository`,
+              `PgPromotionRepository`. Repositories load only the
+              candidate set for one request; precedence picking
+              stays in the pure evaluator (single source of truth).
+            - `SearchService` orchestrates: account → adapter
+              fetchRates (per supplier hotel) → code→hotel_supplier
+              translation → rule + promotion fetch in parallel →
+              evaluator → group by hotel → sort by cheapest selling
+              price ascending. Promotion tag attaches to the result
+              but never reorders past price ascending (CLAUDE.md
+              merchandising-doesn't-mutate-price invariant).
+            - `SearchController` — `POST /search`, hand-rolled body
+              validator, 400 on malformed input. The booking guard
+              still runs per rate so PROVISIONAL is surfaced as
+              `isBookable: false` + `bookingRefusalReason` —
+              consumers can render prices but cannot mistake them
+              for sellable inventory.
+            - `SearchModule` registered in `app.module.ts`. Imports
+              `AdaptersModule` and `DatabaseModule`; explicitly does
+              not import object-storage / payments / booking modules.
+        - Integration test: `apps/api/src/search/__tests__/search.controller.test.ts`
+          boots Nest in fixture mode, seeds tenant + AGENCY account,
+          a CHANNEL 10% rule and a HOTEL 15% rule, plus a PROMOTED
+          merchandising tag. Asserts HOTEL precedence wins, sell ==
+          net + markup exactly (BigInt minor units), promotion tag
+          attached, every rate is `isBookable: false`, trace records
+          the rule firing, malformed body → 400.
+        - `pnpm typecheck` (29/29), `pnpm lint` (28/28),
+          `pnpm test` (24/24 across 5 files) green.
+- [ ] Pricing layer follow-ups (sequenced):
+        - Multi-supplier search (currently calls Hotelbeds only).
+        - Currency conversion step (`CURRENCY_CONVERSION` trace kind
+          already in `@bb/domain`; engine wiring lands when the FX
+          module exists).
+        - Tax / fee composition (ADR-004 step 3).
+        - Promotion / discount kind (`PROMOTION_APPLIED` post-markup).
+        - `FIXED_MARKUP_ABSOLUTE` and `MARKET_ADJUSTED_MARKUP` rule
+          kinds (the second pulls in `@bb/rate-intelligence`).
+        - `canonical_hotel_id` scope on rules + promotions once the
+          mapping pipeline lands; supplier_hotel_id stays as a
+          fallback for unsynced inventory.
+        - Auth on `/search` once the auth module ships — for now the
+          endpoint is open by design (sequenced behind the contract).
 - [ ] Supplier notes: `docs/suppliers/hotelbeds.md`,
       `webbeds.md`, `tbo.md`.
 - [ ] Flow docs: `docs/flows/search.md`, `docs/flows/booking.md`.

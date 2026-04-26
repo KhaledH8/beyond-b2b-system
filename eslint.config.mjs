@@ -21,6 +21,7 @@ const ALL_BB = [
   '@bb/documents',
   '@bb/reseller',
   '@bb/rate-intelligence',
+  '@bb/pricing',
   '@bb/ui',
   '@bb/config',
   '@bb/db',
@@ -37,6 +38,7 @@ const BACKEND_INTERNAL = [
   '@bb/reseller',
   '@bb/supplier-contract',
   '@bb/rate-intelligence',
+  '@bb/pricing',
   '@bb/db',
   '@bb/adapter-hotelbeds',
 ];
@@ -120,6 +122,23 @@ export default tsEslint.config(
       'no-restricted-imports': [
         'error',
         { patterns: forbid(['@bb/domain', '@bb/rate-intelligence'], "packages/rate-intelligence may only depend on @bb/domain. Remove '{name}'.") },
+      ],
+    },
+  },
+  {
+    // pricing: @bb/domain + (later) @bb/rate-intelligence
+    // First slice ships @bb/domain only — market-adjusted markup is a
+    // later phase. Adding @bb/rate-intelligence later is additive.
+    files: ['packages/pricing/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: forbid(
+            ['@bb/domain', '@bb/rate-intelligence', '@bb/pricing'],
+            "packages/pricing may only depend on @bb/domain (and @bb/rate-intelligence later). Remove '{name}'.",
+          ),
+        },
       ],
     },
   },

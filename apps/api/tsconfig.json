@@ -20,6 +20,9 @@
       "@bb/supplier-contract": [
         "../../packages/supplier-contract/dist"
       ],
+      "@bb/pricing": [
+        "../../packages/pricing/dist"
+      ],
       "@bb/adapter-hotelbeds": [
         "../../packages/adapters/hotelbeds/dist"
       ],
@@ -40,6 +43,9 @@
     },
     {
       "path": "../../packages/supplier-contract"
+    },
+    {
+      "path": "../../packages/pricing"
     },
     {
       "path": "../../packages/adapters/hotelbeds"
