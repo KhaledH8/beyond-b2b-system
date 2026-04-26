@@ -36,6 +36,7 @@ jobs:
       OBJECT_STORAGE_SECRET_KEY: bb_local_secret
       HOTELBEDS_CLIENT_KIND: fixture
       HOTELBEDS_FIXTURE_DIR: packages/testing/src/hotelbeds/fixtures
+      INTERNAL_API_KEY: bb-internal-ci-key
 
     steps:
       - name: Checkout

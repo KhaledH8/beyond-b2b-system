@@ -4,7 +4,9 @@ import {
   Controller,
   Inject,
   Post,
+  UseGuards,
 } from '@nestjs/common';
+import { InternalAuthGuard } from '../../internal-auth/internal-auth.guard';
 import type { AdapterSupplierRate } from '@bb/supplier-contract';
 import { SupplierAdapterRegistry } from '../adapter-registry';
 import {
@@ -46,6 +48,7 @@ import { HOTELBEDS_CONFIG } from './hotelbeds.module.tokens';
  *   - Touch authored-rate state. The Hotelbeds adapter is a sourced
  *     supplier and only writes to `offer_sourced_*` tables.
  */
+@UseGuards(InternalAuthGuard)
 @Controller('internal/suppliers/hotelbeds')
 export class HotelbedsController {
   private readonly clientKind: HotelbedsClientKind;

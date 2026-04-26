@@ -9,7 +9,9 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
 import type { AccountType, MarkupRuleScope } from '@bb/domain';
 import {
   ENUM_ACCOUNT_TYPE,
@@ -48,6 +50,7 @@ import type { MarkupRuleAdminRow } from './markup-rule.repository';
  * never DROPped because their ids may appear in older pricing
  * traces and the audit trail must keep dereferencing.
  */
+@UseGuards(InternalAuthGuard)
 @Controller('internal/admin/pricing/markup-rules')
 export class MarkupRuleAdminController {
   constructor(

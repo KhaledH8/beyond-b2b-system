@@ -1,5 +1,6 @@
 import { Inject, Module } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
+import { InternalAuthGuard } from '../../internal-auth/internal-auth.guard';
 import {
   HotelbedsAdapter,
   createFixtureHotelbedsClient,
@@ -71,6 +72,7 @@ export {
 @Module({
   imports: [DatabaseModule, ObjectStorageModule],
   providers: [
+    InternalAuthGuard,
     PgSupplierRegistrationPort,
     PgHotelContentPersistencePort,
     PgMappingPersistencePort,

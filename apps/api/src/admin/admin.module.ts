@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
+import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
 import { MarkupRuleAdminController } from './markup-rule.controller';
 import { MarkupRuleAdminRepository } from './markup-rule.repository';
 import { MarkupRuleAdminService } from './markup-rule.service';
@@ -25,6 +26,7 @@ import { PromotionAdminService } from './promotion.service';
   imports: [DatabaseModule],
   controllers: [MarkupRuleAdminController, PromotionAdminController],
   providers: [
+    InternalAuthGuard,
     MarkupRuleAdminRepository,
     MarkupRuleAdminService,
     PromotionAdminRepository,

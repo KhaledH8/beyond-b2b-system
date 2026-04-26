@@ -24,6 +24,7 @@ import { ObjectStorageModule } from '../../../object-storage/object-storage.modu
 
 loadDotenv({ path: path.resolve(__dirname, '../../../../../../.env') });
 
+const TEST_INTERNAL_KEY = 'bb-internal-test-key';
 const HAS_DATABASE = Boolean(process.env['DATABASE_URL']);
 const describeIntegration = HAS_DATABASE ? describe : describe.skip;
 
@@ -33,6 +34,7 @@ describeIntegration('hotelbeds controller · internal seam (fixture mode)', () =
   let tenantId: string;
 
   beforeAll(async () => {
+    process.env['INTERNAL_API_KEY'] = TEST_INTERNAL_KEY;
     process.env['HOTELBEDS_CLIENT_KIND'] = 'fixture';
     process.env['HOTELBEDS_FIXTURE_DIR'] = path.resolve(
       __dirname,
@@ -89,7 +91,10 @@ describeIntegration('hotelbeds controller · internal seam (fixture mode)', () =
     const url = await urlFor(server, '/internal/suppliers/hotelbeds/content-sync');
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify({ tenantId, pageSize: 50, maxPages: 1 }),
     });
     expect(res.status).toBe(201); // Nest @Post defaults to 201 unless overridden
@@ -112,7 +117,10 @@ describeIntegration('hotelbeds controller · internal seam (fixture mode)', () =
     const url = await urlFor(server, '/internal/suppliers/hotelbeds/search');
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify({
         tenantId,
         supplierHotelId: '1000073',
@@ -151,10 +159,24 @@ describeIntegration('hotelbeds controller · internal seam (fixture mode)', () =
     const url = await urlFor(server, '/internal/suppliers/hotelbeds/search');
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify({ tenantId, supplierHotelId: '1000073' }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it('returns 401 when X-Internal-Key header is missing', async () => {
+    const server = app.getHttpServer() as Parameters<typeof fetch>[0];
+    const url = await urlFor(server, '/internal/suppliers/hotelbeds/content-sync');
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tenantId, pageSize: 1, maxPages: 1 }),
+    });
+    expect(res.status).toBe(401);
   });
 });
 

@@ -37,6 +37,7 @@ import { SearchModule } from '../search.module';
 
 loadDotenv({ path: path.resolve(__dirname, '../../../../../.env') });
 
+const TEST_INTERNAL_KEY = 'bb-internal-test-key';
 const HAS_DATABASE = Boolean(process.env['DATABASE_URL']);
 const describeIntegration = HAS_DATABASE ? describe : describe.skip;
 
@@ -47,6 +48,7 @@ describeIntegration('search controller · channel-aware pricing (fixture mode)',
   let accountId: string;
 
   beforeAll(async () => {
+    process.env['INTERNAL_API_KEY'] = TEST_INTERNAL_KEY;
     process.env['HOTELBEDS_CLIENT_KIND'] = 'fixture';
     process.env['HOTELBEDS_FIXTURE_DIR'] = path.resolve(
       __dirname,
@@ -109,7 +111,10 @@ describeIntegration('search controller · channel-aware pricing (fixture mode)',
     const url = await urlFor(server, '/internal/suppliers/hotelbeds/content-sync');
     const csRes = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify({ tenantId, pageSize: 50, maxPages: 1 }),
     });
     if (csRes.status !== 201) {

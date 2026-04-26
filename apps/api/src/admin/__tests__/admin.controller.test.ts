@@ -31,6 +31,7 @@ import { ObjectStorageModule } from '../../object-storage/object-storage.module'
 
 loadDotenv({ path: path.resolve(__dirname, '../../../../../.env') });
 
+const TEST_INTERNAL_KEY = 'bb-internal-test-key';
 const HAS_DATABASE = Boolean(process.env['DATABASE_URL']);
 const describeIntegration = HAS_DATABASE ? describe : describe.skip;
 
@@ -42,6 +43,7 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
   let supplierHotelId: string;
 
   beforeAll(async () => {
+    process.env['INTERNAL_API_KEY'] = TEST_INTERNAL_KEY;
     process.env['HOTELBEDS_CLIENT_KIND'] = 'fixture';
     process.env['HOTELBEDS_FIXTURE_DIR'] = path.resolve(
       __dirname,
@@ -104,7 +106,10 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
     const url = await urlFor(server, '/internal/suppliers/hotelbeds/content-sync');
     const csRes = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify({ tenantId, pageSize: 50, maxPages: 1 }),
     });
     if (csRes.status !== 201) {
@@ -418,7 +423,10 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
     const url = await urlFor(app.getHttpServer(), path);
     return fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify(body),
     });
   }
@@ -426,18 +434,70 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
     const url = await urlFor(app.getHttpServer(), path);
     return fetch(url, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-key': TEST_INTERNAL_KEY,
+      },
       body: JSON.stringify(body),
     });
   }
   async function del(path: string): Promise<Response> {
     const url = await urlFor(app.getHttpServer(), path);
-    return fetch(url, { method: 'DELETE' });
+    return fetch(url, {
+      method: 'DELETE',
+      headers: { 'x-internal-key': TEST_INTERNAL_KEY },
+    });
   }
   async function get(path: string): Promise<Response> {
     const url = await urlFor(app.getHttpServer(), path);
-    return fetch(url, { method: 'GET' });
+    return fetch(url, {
+      method: 'GET',
+      headers: { 'x-internal-key': TEST_INTERNAL_KEY },
+    });
   }
+
+  describe('unauthenticated requests', () => {
+    it('returns 401 when X-Internal-Key header is missing', async () => {
+      const url = await urlFor(
+        app.getHttpServer(),
+        '/internal/admin/pricing/markup-rules',
+      );
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          scope: 'CHANNEL',
+          accountType: 'AGENCY',
+          percentValue: '5.0000',
+          priority: 0,
+        }),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 401 when X-Internal-Key header is wrong', async () => {
+      const url = await urlFor(
+        app.getHttpServer(),
+        '/internal/admin/pricing/markup-rules',
+      );
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-key': 'wrong-key',
+        },
+        body: JSON.stringify({
+          tenantId,
+          scope: 'CHANNEL',
+          accountType: 'AGENCY',
+          percentValue: '5.0000',
+          priority: 0,
+        }),
+      });
+      expect(res.status).toBe(401);
+    });
+  });
 });
 
 async function urlFor(_server: unknown, p: string): Promise<string> {

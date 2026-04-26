@@ -9,7 +9,9 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
 import type { AccountType, PromotionKind } from '@bb/domain';
 import {
   ENUM_ACCOUNT_TYPE,
@@ -45,6 +47,7 @@ import type { PromotionAdminRow } from './promotion.repository';
  * point of view but the row remains for audit and any later
  * reactivation.
  */
+@UseGuards(InternalAuthGuard)
 @Controller('internal/admin/merchandising/promotions')
 export class PromotionAdminController {
   constructor(
