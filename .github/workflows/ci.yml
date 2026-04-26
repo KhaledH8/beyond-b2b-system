@@ -10,7 +10,32 @@ jobs:
   ci:
     name: Build · Typecheck · Lint · Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: beyond_borders
+          POSTGRES_USER: bb
+          POSTGRES_PASSWORD: bb_local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bb -d beyond_borders"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://bb:bb_local@localhost:5432/beyond_borders
+      REDIS_URL: redis://localhost:6379
+      OBJECT_STORAGE_ENDPOINT: http://localhost:9000
+      OBJECT_STORAGE_BUCKET: beyond-borders-local
+      OBJECT_STORAGE_ACCESS_KEY: bb_local
+      OBJECT_STORAGE_SECRET_KEY: bb_local_secret
+      HOTELBEDS_CLIENT_KIND: fixture
+      HOTELBEDS_FIXTURE_DIR: packages/testing/src/hotelbeds/fixtures
 
     steps:
       - name: Checkout
@@ -28,6 +53,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Start MinIO
+        run: |
+          docker run -d \
+            --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=bb_local \
+            -e MINIO_ROOT_PASSWORD=bb_local_secret \
+            minio/minio:latest server /data
+          until curl -sf http://localhost:9000/minio/health/live; do
+            sleep 2
+          done
+
       - name: Build
         run: pnpm build
 
@@ -36,6 +73,9 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Migrate database
+        run: pnpm db:migrate
 
       - name: Test
         run: pnpm test
