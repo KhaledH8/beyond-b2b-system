@@ -721,6 +721,74 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
           the rule firing, malformed body → 400.
         - `pnpm typecheck` (29/29), `pnpm lint` (28/28),
           `pnpm test` (24/24 across 5 files) green.
+- [x] **Internal admin CRUD over pricing + merchandising** —
+      configuration surface that the search/pricing layer reads from,
+      mounted at `/internal/admin/...` alongside the other dev/ops
+      seams.
+        - `apps/api/src/admin/validation.ts` — hand-rolled
+          validators (ULID, decimal-string with up to 4 fractional
+          digits, ISO timestamp, AccountType / Status / Scope /
+          PromotionKind enums, integer ranges, `rejectExtraKeys`,
+          `ensureValidityWindow`). No class-validator dep.
+        - Markup rules (`apps/api/src/admin/markup-rule.{repository,service,controller}.ts`):
+            - `POST   /internal/admin/pricing/markup-rules`
+            - `GET    /internal/admin/pricing/markup-rules`
+              (filters: `tenantId`, `scope`, `accountId`,
+              `supplierHotelId`, `accountType`, `status`,
+              `limit`, `offset`)
+            - `GET    /internal/admin/pricing/markup-rules/:id`
+            - `PATCH  /internal/admin/pricing/markup-rules/:id`
+              (mutable: `percentValue`, `priority`, `validFrom`,
+              `validTo`, `status`)
+            - `DELETE /internal/admin/pricing/markup-rules/:id`
+              (soft-delete → `status='INACTIVE'`)
+            - Service enforces "exactly one scope key matches scope"
+              before the row hits the DB CHECK; window validation
+              composes patch + existing row so partial edits cannot
+              produce `validTo <= validFrom`. Postgres FK / CHECK
+              violations are translated to `ConflictException` with
+              the constraint name surfaced.
+        - Promotions (`apps/api/src/admin/promotion.{repository,service,controller}.ts`):
+            - `POST   /internal/admin/merchandising/promotions`
+            - `GET    /internal/admin/merchandising/promotions`
+              (filters: `tenantId`, `supplierHotelId`,
+              `accountType`, `kind`, `status`, `limit`, `offset`)
+            - `GET    /internal/admin/merchandising/promotions/:id`
+            - `PATCH  /internal/admin/merchandising/promotions/:id`
+              (mutable: `kind`, `priority`, `accountType` (tri-state
+              clearable to NULL), `validFrom`, `validTo`, `status`)
+            - `DELETE /internal/admin/merchandising/promotions/:id`
+              (soft-delete)
+            - `tenantId` and `supplierHotelId` are create-time-only
+              (immutable on patch) — changing them effectively
+              creates a different promotion.
+        - Soft-delete is the only delete mode for both surfaces. Rows
+          remain queryable for audit; the search-time read path
+          filters on `status = 'ACTIVE'` so deactivation is
+          immediate from the consumer perspective.
+        - `AdminModule` registered in `app.module.ts`. Imports
+          `DatabaseModule` only — no adapters, no object storage, no
+          search, no booking.
+        - `apps/api/src/admin/__tests__/admin.controller.test.ts` —
+          18 integration tests boot Nest in fixture mode, seed a
+          tenant + AGENCY account + Hotelbeds content sync (so a
+          `hotel_supplier` row exists for HOTEL-scope tests), then
+          exercise:
+            - create per scope (ACCOUNT, HOTEL, CHANNEL) and per
+              promotion kind (PROMOTED / RECOMMENDED / FEATURED)
+            - 400 on cross-scope keys (e.g. CHANNEL + accountId)
+            - 400 on malformed `percentValue` (>4 fractional digits)
+            - 400 on unknown body keys
+            - 400 on `validTo <= validFrom`
+            - list with `tenantId + scope` filter
+            - patch `percentValue` + `priority`; preserves scope
+            - patch reject on immutable / unknown field
+            - DELETE → status flips to `INACTIVE`, row remains
+              retrievable
+            - promotion patch: clear `accountType` with explicit
+              null; reject patch on `supplierHotelId`
+        - `pnpm typecheck` (29/29), `pnpm lint` (28/28),
+          `pnpm test` (42/42 across 6 files) green.
 - [ ] Pricing layer follow-ups (sequenced):
         - Multi-supplier search (currently calls Hotelbeds only).
         - Currency conversion step (`CURRENCY_CONVERSION` trace kind
@@ -733,8 +801,12 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
         - `canonical_hotel_id` scope on rules + promotions once the
           mapping pipeline lands; supplier_hotel_id stays as a
           fallback for unsynced inventory.
-        - Auth on `/search` once the auth module ships — for now the
-          endpoint is open by design (sequenced behind the contract).
+        - Auth on `/search` and on `/internal/admin/...` once the
+          auth module ships — both are open by design today,
+          sequenced behind the contracts.
+        - Audit log on admin writes — `admin_audit_event` table that
+          captures `(actor, action, before, after)` per
+          create/patch/delete.
 - [ ] Supplier notes: `docs/suppliers/hotelbeds.md`,
       `webbeds.md`, `tbo.md`.
 - [ ] Flow docs: `docs/flows/search.md`, `docs/flows/booking.md`.

@@ -10,7 +10,7 @@ interface PromotionRow {
 }
 
 /**
- * Postgres-backed read of `merchandising_promotion`.
+ * Postgres-backed read of `merch_promotion`.
  *
  * Returns one tag per supplier hotel — when multiple promotions
  * match, the highest-priority row wins (with `kind` order as the
@@ -38,7 +38,7 @@ export class PgPromotionRepository {
       `
       SELECT DISTINCT ON (supplier_hotel_id)
              supplier_hotel_id, kind, priority
-        FROM merchandising_promotion
+        FROM merch_promotion
        WHERE tenant_id = $1
          AND status = 'ACTIVE'
          AND supplier_hotel_id = ANY($2::text[])

@@ -175,6 +175,55 @@ describe('evaluateSourcedOffer · precedence', () => {
   });
 });
 
+describe('evaluateSourcedOffer · COLLECTION_AND_SETTLEMENT_BIND step', () => {
+  it('inserts bind step between NET_COST and MARKUP_APPLIED when moneyMovement is present', () => {
+    const r = rule({
+      id: 'R-CHANNEL',
+      scope: 'CHANNEL',
+      accountType: 'AGENCY',
+      percentValue: '10.0000',
+    });
+    const result = evaluateSourcedOffer(
+      {
+        ...offer({ amount: '100.00' }),
+        moneyMovement: {
+          collectionMode: 'BB_COLLECTS',
+          supplierSettlementMode: 'PREPAID_BALANCE',
+          paymentCostModel: 'PLATFORM_CARD_FEE',
+        },
+        grossCurrencySemantics: 'NET_TO_BB',
+      },
+      [r],
+      ctx,
+    );
+    expect(result.trace.steps.length).toBe(3);
+    expect(result.trace.steps[0]!.kind).toBe('NET_COST');
+    expect(result.trace.steps[1]!.kind).toBe('COLLECTION_AND_SETTLEMENT_BIND');
+    expect(result.trace.steps[1]!.before.amount).toBe('100.00');
+    expect(result.trace.steps[1]!.after.amount).toBe('100.00');
+    expect(result.trace.steps[1]!.collectionMode).toBe('BB_COLLECTS');
+    expect(result.trace.steps[1]!.supplierSettlementMode).toBe('PREPAID_BALANCE');
+    expect(result.trace.steps[1]!.paymentCostModel).toBe('PLATFORM_CARD_FEE');
+    expect(result.trace.steps[1]!.grossCurrencySemantics).toBe('NET_TO_BB');
+    expect(result.trace.steps[2]!.kind).toBe('MARKUP_APPLIED');
+    // Selling price is still 110.00 — bind step does not change the amount.
+    expect(result.priceQuote.sellingPrice.amount).toBe('110.00');
+  });
+
+  it('omits bind step when moneyMovement is absent', () => {
+    const r = rule({
+      id: 'R-CHANNEL',
+      scope: 'CHANNEL',
+      accountType: 'AGENCY',
+      percentValue: '10.0000',
+    });
+    const result = evaluateSourcedOffer(offer({ amount: '100.00' }), [r], ctx);
+    expect(result.trace.steps.length).toBe(2);
+    expect(result.trace.steps[0]!.kind).toBe('NET_COST');
+    expect(result.trace.steps[1]!.kind).toBe('MARKUP_APPLIED');
+  });
+});
+
 describe('evaluateSourcedOffer · multi-tenant isolation', () => {
   it('rejects rules from another tenant even if other fields match', () => {
     const otherTenant = rule({

@@ -200,6 +200,8 @@ export class SearchService {
         supplierHotelId,
         netAmountMinorUnits: netMinor,
         currency: rate.grossAmount.currency,
+        moneyMovement: rate.moneyMovement,
+        grossCurrencySemantics: rate.grossCurrencySemantics,
       },
       rules,
       ctx,

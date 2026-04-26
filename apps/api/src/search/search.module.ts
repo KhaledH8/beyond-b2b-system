@@ -14,7 +14,7 @@ import { SearchService } from './search.service';
  * Imports `AdaptersModule` so the orchestrator can pull the
  * `SupplierAdapterRegistry` (Hotelbeds today; multi-supplier later).
  * Imports `DatabaseModule` for the per-search reads (account,
- * hotel_supplier, pricing_markup_rule, merchandising_promotion).
+ * hotel_supplier, pricing_markup_rule, merch_promotion).
  *
  * No direct dependency on object storage or payments — search reads
  * sourced offer pricing fields directly off the adapter response;

@@ -20,6 +20,18 @@ export interface PricingTraceStep {
   readonly after: Money;
   readonly ruleId?: string;
   readonly reason?: string;
+  /**
+   * Populated only when kind === 'COLLECTION_AND_SETTLEMENT_BIND'
+   * (ADR-004 / ADR-020). Records the resolved money-movement triple
+   * and gross-currency semantics so every downstream decision sees
+   * the same values that were bound at pricing time.
+   * String union literals are inlined here rather than imported from
+   * `@bb/domain/supplier` to keep the pricing trace type self-contained.
+   */
+  readonly collectionMode?: string;
+  readonly supplierSettlementMode?: string;
+  readonly paymentCostModel?: string;
+  readonly grossCurrencySemantics?: string;
 }
 
 export interface PricingTrace {

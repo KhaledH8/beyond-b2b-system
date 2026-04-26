@@ -1,9 +1,11 @@
 import type {
   AccountContext,
   AppliedMarkup,
+  GrossCurrencySemantics,
   MarkupRuleScope,
   MarkupRuleSnapshot,
   Money,
+  MoneyMovementTriple,
   PriceQuote,
   PricingTrace,
   PricingTraceStep,
@@ -47,6 +49,9 @@ export interface PriceableSourcedOffer {
   readonly supplierHotelId: string;
   readonly netAmountMinorUnits: bigint;
   readonly currency: string;
+  /** ADR-004 / ADR-020: when present, a COLLECTION_AND_SETTLEMENT_BIND step is appended to the trace immediately after NET_COST. */
+  readonly moneyMovement?: MoneyMovementTriple;
+  readonly grossCurrencySemantics?: GrossCurrencySemantics;
 }
 
 export interface EvaluatedOffer {
@@ -73,6 +78,20 @@ export function evaluateSourcedOffer(
       reason: 'supplier net (sourced composed total)',
     },
   ];
+
+  if (offer.moneyMovement !== undefined) {
+    steps.push({
+      kind: 'COLLECTION_AND_SETTLEMENT_BIND',
+      before: netMoney,
+      after: netMoney,
+      collectionMode: offer.moneyMovement.collectionMode,
+      supplierSettlementMode: offer.moneyMovement.supplierSettlementMode,
+      paymentCostModel: offer.moneyMovement.paymentCostModel,
+      ...(offer.grossCurrencySemantics !== undefined
+        ? { grossCurrencySemantics: offer.grossCurrencySemantics }
+        : {}),
+    });
+  }
 
   if (!winning) {
     return {

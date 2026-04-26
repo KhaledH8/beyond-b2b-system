@@ -137,7 +137,7 @@ describeIntegration('search controller · channel-aware pricing (fixture mode)',
       [newUlid(), tenantId, supplierHotelId],
     );
     await pool.query(
-      `INSERT INTO merchandising_promotion
+      `INSERT INTO merch_promotion
          (id, tenant_id, supplier_hotel_id, kind, priority, account_type)
        VALUES ($1, $2, $3, 'PROMOTED', 100, 'AGENCY')`,
       [newUlid(), tenantId, supplierHotelId],
@@ -202,10 +202,11 @@ describeIntegration('search controller · channel-aware pricing (fixture mode)',
       expect(rate.isBookable).toBe(false);
       expect(rate.bookingRefusalReason).toMatch(/PROVISIONAL/);
 
-      // Pricing trace records the rule firing.
-      expect(rate.trace.steps.length).toBe(2);
+      // Pricing trace records the bind step and the rule firing.
+      expect(rate.trace.steps.length).toBe(3);
       expect(rate.trace.steps[0]!.kind).toBe('NET_COST');
-      expect(rate.trace.steps[1]!.kind).toBe('MARKUP_APPLIED');
+      expect(rate.trace.steps[1]!.kind).toBe('COLLECTION_AND_SETTLEMENT_BIND');
+      expect(rate.trace.steps[2]!.kind).toBe('MARKUP_APPLIED');
     }
 
     // Rates within a hotel sort by selling price ascending.

@@ -37,7 +37,7 @@ interface DbRow {
 }
 
 /**
- * CRUD repository over `merchandising_promotion`.
+ * CRUD repository over `merch_promotion`.
  *
  * Promotions are decorative tags only — search-side
  * `PgPromotionRepository` reads them but pricing never sees them.
@@ -62,7 +62,7 @@ export class PromotionAdminRepository {
     try {
       const { rows } = await this.pool.query<DbRow>(
         `
-        INSERT INTO merchandising_promotion (
+        INSERT INTO merch_promotion (
           id, tenant_id, supplier_hotel_id, kind, priority,
           account_type, valid_from, valid_to, status
         )
@@ -94,7 +94,7 @@ export class PromotionAdminRepository {
     tenantId: string,
   ): Promise<PromotionAdminRow | null> {
     const { rows } = await this.pool.query<DbRow>(
-      `SELECT * FROM merchandising_promotion WHERE id = $1 AND tenant_id = $2`,
+      `SELECT * FROM merch_promotion WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
     );
     return rows[0] ? toAdminRow(rows[0]) : null;
@@ -113,7 +113,7 @@ export class PromotionAdminRepository {
     const offset = filter.offset ?? 0;
     const { rows } = await this.pool.query<DbRow>(
       `
-      SELECT * FROM merchandising_promotion
+      SELECT * FROM merch_promotion
        WHERE tenant_id = $1
          AND ($2::char(26) IS NULL OR supplier_hotel_id = $2)
          AND ($3::text IS NULL OR account_type = $3)
@@ -159,7 +159,7 @@ export class PromotionAdminRepository {
     try {
       const { rows } = await this.pool.query<DbRow>(
         `
-        UPDATE merchandising_promotion
+        UPDATE merch_promotion
            SET kind         = COALESCE($3::text,        kind),
                priority     = COALESCE($4::integer,     priority),
                account_type = CASE WHEN $5::boolean THEN $6::text
@@ -188,7 +188,7 @@ export class PromotionAdminRepository {
         ],
       );
       if (rows.length === 0) {
-        throw new NotFoundException(`merchandising_promotion ${id} not found`);
+        throw new NotFoundException(`merch_promotion ${id} not found`);
       }
       return toAdminRow(rows[0]!);
     } catch (err) {

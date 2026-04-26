@@ -35,7 +35,7 @@ import {
 import type { PromotionAdminRow } from './promotion.repository';
 
 /**
- * Admin CRUD over `merchandising_promotion`.
+ * Admin CRUD over `merch_promotion`.
  *
  * Internal-only — see `MarkupRuleAdminController` for the same auth /
  * mounting rationale. Soft-delete only (status flips to INACTIVE).
