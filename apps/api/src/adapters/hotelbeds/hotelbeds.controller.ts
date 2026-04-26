@@ -12,10 +12,8 @@ import {
   assertRateBookable,
 } from '../../booking/booking-guard';
 import { HotelbedsContentSyncService } from './content-sync.service';
-import {
-  loadHotelbedsConfig,
-  type HotelbedsClientKind,
-} from './hotelbeds.config';
+import type { HotelbedsClientKind, HotelbedsConfig } from './hotelbeds.config';
+import { HOTELBEDS_CONFIG } from './hotelbeds.module.tokens';
 
 /**
  * Internal/dev API seam for the Hotelbeds adapter.
@@ -50,12 +48,18 @@ import {
  */
 @Controller('internal/suppliers/hotelbeds')
 export class HotelbedsController {
+  private readonly clientKind: HotelbedsClientKind;
+
   constructor(
     @Inject(SupplierAdapterRegistry)
     private readonly registry: SupplierAdapterRegistry,
     @Inject(HotelbedsContentSyncService)
     private readonly contentSync: HotelbedsContentSyncService,
-  ) {}
+    @Inject(HOTELBEDS_CONFIG)
+    config: HotelbedsConfig,
+  ) {
+    this.clientKind = config.kind;
+  }
 
   @Post('content-sync')
   async triggerContentSync(
@@ -73,7 +77,7 @@ export class HotelbedsController {
 
     return {
       supplier: 'hotelbeds',
-      clientKind: loadHotelbedsConfig().kind,
+      clientKind: this.clientKind,
       tenantId,
       pagesFetched: result.pagesFetched,
       hotelsUpserted: result.hotelsUpserted,
@@ -105,7 +109,7 @@ export class HotelbedsController {
 
     return {
       supplier: 'hotelbeds',
-      clientKind: loadHotelbedsConfig().kind,
+      clientKind: this.clientKind,
       tenantId,
       rateCount: rates.length,
       rates: rates.map(projectRate),

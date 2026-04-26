@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { evaluateSourcedOffer, toMinorUnits } from '@bb/pricing';
 import type {
   AccountContext,
@@ -70,7 +70,7 @@ export class SearchService {
       // Cross-tenant guard: an account never participates in a
       // search outside its own tenant. The request claimed one
       // tenant; the account lives in another. Refuse loudly.
-      throw new Error(
+      throw new ForbiddenException(
         `accountId=${req.accountId} does not belong to tenantId=${req.tenantId}`,
       );
     }

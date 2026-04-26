@@ -16,3 +16,12 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
  * place (`pickClient` inside `HotelbedsModule`).
  */
 export const HOTELBEDS_CLIENT = 'HOTELBEDS_CLIENT' as const;
+
+/**
+ * Token for the resolved `HotelbedsConfig` singleton. Parsed once at
+ * module init from env vars — request handlers must not call
+ * `loadHotelbedsConfig()` themselves or they re-parse env on every
+ * request. Inject this token when you only need a config field (e.g.
+ * `config.kind` for response shaping in the controller).
+ */
+export const HOTELBEDS_CONFIG = 'HOTELBEDS_CONFIG' as const;

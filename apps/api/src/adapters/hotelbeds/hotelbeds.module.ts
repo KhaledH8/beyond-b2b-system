@@ -21,10 +21,18 @@ import {
   readFixtureFiles,
 } from './hotelbeds.config';
 import type { HotelbedsConfig } from './hotelbeds.config';
-import { HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT } from './hotelbeds.module.tokens';
+import {
+  HOTELBEDS_ADAPTER,
+  HOTELBEDS_CLIENT,
+  HOTELBEDS_CONFIG,
+} from './hotelbeds.module.tokens';
 import { HotelbedsContentSyncService } from './content-sync.service';
 
-export { HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT } from './hotelbeds.module.tokens';
+export {
+  HOTELBEDS_ADAPTER,
+  HOTELBEDS_CLIENT,
+  HOTELBEDS_CONFIG,
+} from './hotelbeds.module.tokens';
 
 /**
  * Phase 2 composition-root wiring for the Hotelbeds adapter.
@@ -70,8 +78,13 @@ export { HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT } from './hotelbeds.module.tokens';
     MinioRawPayloadStoragePort,
     HotelbedsContentSyncService,
     {
+      provide: HOTELBEDS_CONFIG,
+      useFactory: (): HotelbedsConfig => loadHotelbedsConfig(),
+    },
+    {
       provide: HOTELBEDS_CLIENT,
-      useFactory: (): HotelbedsClient => pickClient(loadHotelbedsConfig()),
+      useFactory: (cfg: HotelbedsConfig): HotelbedsClient => pickClient(cfg),
+      inject: [HOTELBEDS_CONFIG],
     },
     {
       provide: HOTELBEDS_ADAPTER,
@@ -115,7 +128,7 @@ export { HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT } from './hotelbeds.module.tokens';
       ],
     },
   ],
-  exports: [HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT, HotelbedsContentSyncService],
+  exports: [HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT, HOTELBEDS_CONFIG, HotelbedsContentSyncService],
 })
 export class HotelbedsModule implements OnModuleInit {
   constructor(
