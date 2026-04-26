@@ -601,7 +601,58 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
       `CanonicalHotel` (`packages/content/`).
 - [ ] Basic pricing evaluator — `PERCENT_MARKUP` rule, trace output
       (`packages/pricing/`).
-- [ ] Search API endpoint in `apps/api`.
+- [x] **Internal Hotelbeds API seam** — minimal, dev-oriented HTTP
+      surface for triggering the adapter end-to-end:
+        - `POST /internal/suppliers/hotelbeds/content-sync` →
+          runs `runHotelContentSync` through `HotelbedsContentSyncService`
+          (a thin DI wrapper that injects `HOTELBEDS_CLIENT`,
+          `PgHotelContentPersistencePort`, `MinioRawPayloadStoragePort`).
+          Body: `{ tenantId, pageSize?, maxPages? }`. Response carries
+          `{ supplier, clientKind, tenantId, pagesFetched, hotelsUpserted }`.
+        - `POST /internal/suppliers/hotelbeds/search` →
+          calls `SupplierAdapterRegistry.get('hotelbeds').fetchRates(...)`
+          which runs the full sourced-search write path. Body:
+          `{ tenantId, supplierHotelId, checkIn, checkOut,
+          occupancy:{ adults, children, childAges? }, currency? }`.
+          Response carries `{ supplier, clientKind, tenantId,
+          rateCount, rates: [...] }`. Each rate projection includes
+          `moneyMovementProvenance` and an honest `isBookable: false`
+          + `bookingRefusalReason` from the booking guard, so the
+          PROVISIONAL safeguard is never quietly hidden by the seam.
+        - `apps/api/src/adapters/hotelbeds/hotelbeds.module.tokens.ts` —
+          extracted `HOTELBEDS_ADAPTER` and added `HOTELBEDS_CLIENT`
+          tokens so adapter-internal services can share the same
+          runtime-selected client without depending on the module.
+        - `HOTELBEDS_CLIENT` is now a dedicated provider keyed by
+          `pickClient(loadHotelbedsConfig())`. The adapter factory
+          and `HotelbedsContentSyncService` both inject it; the
+          `stub | fixture | live` switch lives in exactly one place.
+        - Controller is mounted on `AdaptersModule` (alongside the
+          `SupplierAdapterRegistry`); `HotelbedsModule` exports
+          `HOTELBEDS_ADAPTER`, `HOTELBEDS_CLIENT`,
+          `HotelbedsContentSyncService` for downstream consumers.
+        - `apps/api/src/adapters/hotelbeds/__tests__/hotelbeds.controller.test.ts` —
+          integration test boots a real Nest app via
+          `Test.createTestingModule`, forces `HOTELBEDS_CLIENT_KIND=fixture`
+          + `HOTELBEDS_FIXTURE_DIR` to the in-repo fixtures, drives both
+          endpoints over HTTP, asserts response shape +
+          `clientKind=fixture` + `isBookable=false` + 400 on bad bodies.
+          Skips cleanly when `DATABASE_URL` is absent.
+        - Hand-rolled body validators (no class-validator dep added)
+          throw `BadRequestException` from @nestjs/common on missing
+          / malformed fields. Endpoints reject bodies before any
+          adapter call.
+        - Constructor injection in module / service / controller
+          uses explicit `@Inject(ClassRef)` so vitest's esbuild
+          transpiler (which does not implement
+          `emitDecoratorMetadata`) does not break Nest DI in tests.
+          Production tsc emits the metadata anyway — `@Inject` is
+          additive, not load-bearing in prod.
+        - `pnpm typecheck` (27/27), `pnpm lint` (26/26),
+          `pnpm test` (12/12 across 3 files) green.
+- [ ] Public search API endpoint — account-aware (B2C / B2B / etc.),
+      with pricing engine + merchandising. Distinct from the internal
+      seam above, which is dev/ops only.
 - [ ] Supplier notes: `docs/suppliers/hotelbeds.md`,
       `webbeds.md`, `tbo.md`.
 - [ ] Flow docs: `docs/flows/search.md`, `docs/flows/booking.md`.

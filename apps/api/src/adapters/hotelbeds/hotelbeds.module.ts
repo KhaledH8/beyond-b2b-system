@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Inject, Module } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
 import {
   HotelbedsAdapter,
@@ -21,8 +21,10 @@ import {
   readFixtureFiles,
 } from './hotelbeds.config';
 import type { HotelbedsConfig } from './hotelbeds.config';
+import { HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT } from './hotelbeds.module.tokens';
+import { HotelbedsContentSyncService } from './content-sync.service';
 
-export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
+export { HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT } from './hotelbeds.module.tokens';
 
 /**
  * Phase 2 composition-root wiring for the Hotelbeds adapter.
@@ -39,6 +41,11 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
  *                request timeout, and optional response capture for
  *                fixture promotion.
  *
+ * The selected client is registered under `HOTELBEDS_CLIENT` so other
+ * services (currently `HotelbedsContentSyncService`, later potentially
+ * a worker-side cron) can share the same instance the adapter uses.
+ * The `pickClient(cfg)` switch lives in exactly one place.
+ *
  * `createProvisionalResolver` stays on every kind: the booking guard
  * (`booking/booking-guard.ts`) is the single point that refuses to
  * book a `PROVISIONAL` rate, and that invariant must hold regardless
@@ -46,6 +53,12 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
  * Swapping in `createStaticResolver` / `createPayloadFirstResolver`
  * is gated on ops confirming Hotelbeds' commercial money-movement
  * model, not on whether HTTP is live.
+ *
+ * The controller (`/internal/suppliers/hotelbeds/...`) is mounted
+ * here too because it is Hotelbeds-specific and only meaningful when
+ * the adapter has been wired. When a second adapter lands, each gets
+ * its own internal controller — there is no shared "/internal"
+ * surface to pull into a separate module yet.
  */
 @Module({
   imports: [DatabaseModule, ObjectStorageModule],
@@ -55,18 +68,23 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
     PgMappingPersistencePort,
     PgSourcedOfferPersistencePort,
     MinioRawPayloadStoragePort,
+    HotelbedsContentSyncService,
+    {
+      provide: HOTELBEDS_CLIENT,
+      useFactory: (): HotelbedsClient => pickClient(loadHotelbedsConfig()),
+    },
     {
       provide: HOTELBEDS_ADAPTER,
       useFactory: (
+        client: HotelbedsClient,
         registration: PgSupplierRegistrationPort,
         hotels: PgHotelContentPersistencePort,
         mappings: PgMappingPersistencePort,
         offers: PgSourcedOfferPersistencePort,
         rawStorage: MinioRawPayloadStoragePort,
       ): HotelbedsAdapter => {
-        const cfg = loadHotelbedsConfig();
         return new HotelbedsAdapter({
-          client: pickClient(cfg),
+          client,
           registration,
           rawStorage,
           hotels,
@@ -88,6 +106,7 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
         });
       },
       inject: [
+        HOTELBEDS_CLIENT,
         PgSupplierRegistrationPort,
         PgHotelContentPersistencePort,
         PgMappingPersistencePort,
@@ -96,10 +115,15 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
       ],
     },
   ],
-  exports: [HOTELBEDS_ADAPTER],
+  exports: [HOTELBEDS_ADAPTER, HOTELBEDS_CLIENT, HotelbedsContentSyncService],
 })
 export class HotelbedsModule implements OnModuleInit {
   constructor(
+    // Explicit @Inject so module bootstrap does not rely on
+    // emitDecoratorMetadata. Production tsc emits it, but vitest's
+    // esbuild transpiler does not — without @Inject this constructor
+    // injection breaks in tests.
+    @Inject(PgSupplierRegistrationPort)
     private readonly registration: PgSupplierRegistrationPort,
   ) {}
 
