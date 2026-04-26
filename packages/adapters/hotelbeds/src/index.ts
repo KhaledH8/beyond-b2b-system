@@ -4,6 +4,10 @@ export type { HotelbedsAdapterDeps } from './adapter';
 export {
   createStubHotelbedsClient,
 } from './client';
+export { createLiveHotelbedsClient, HotelbedsHttpError } from './live-client';
+export type { LiveHotelbedsClientConfig } from './live-client';
+export { createFixtureHotelbedsClient } from './fixture-client';
+export type { HotelbedsFixtures } from './fixture-client';
 export type {
   HotelbedsClient,
   HotelbedsClientConfig,

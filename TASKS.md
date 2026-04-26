@@ -516,13 +516,82 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
       Test skips cleanly when `DATABASE_URL` is absent so CI
       without a local stack is not broken. `pnpm typecheck`,
       `pnpm lint`, and `pnpm test` green.
-- [ ] **Hotelbeds adapter live wiring (Phase 2)** — real HTTP client
-      with signing + retry/back-pressure (replaces the stub),
-      booking confirmation (feeds the booking saga from ADR-010),
-      cancellation, worker-side content-sync cron. Fixture-replay
-      path above stays as the regression harness; once live HTTP
-      lands, additional fixtures recorded from the real API feed
-      into the same conformance suite.
+- [x] **Hotelbeds adapter live HTTP client (Phase 2)** — real
+      HTTP transport with signing, retry/backoff, timeout, and
+      capture, plus runtime client-kind switch at the composition
+      root. Booking confirmation, cancellation, and the
+      worker-side content-sync cron are explicitly still out of
+      scope and remain Phase 2+/Phase 3 follow-ups.
+        - `packages/adapters/hotelbeds/src/live-client.ts` —
+          `createLiveHotelbedsClient(config)`. Auth per
+          developer.hotelbeds.com `/getting-started`:
+          `Api-key: <apiKey>` + `X-Signature:
+          SHA256_hex(apiKey + secret + epochSeconds)` recomputed per
+          request. `Accept: application/json`,
+          `Accept-Encoding: gzip`. Endpoints:
+          `GET /hotel-content-api/1.0/hotels?fields=all&from&to&language&useSecondaryLanguage=false`
+          and `POST /hotel-api/1.0/hotels`.
+        - Retry policy: 429 / 500 / 502 / 503 / 504, AbortError
+          timeouts, network TypeErrors. Honors `Retry-After`
+          (seconds or HTTP-date). Default 3 retries with
+          exponential backoff + jitter from a 200ms base.
+        - Per-request timeout via `AbortSignal.timeout(...)`;
+          default 15s, configurable.
+        - Optional capture: when `captureDir` is set, every
+          successful raw response is also written to
+          `<captureDir>/<purpose>/<iso>-<sha256>.json`. Capture
+          failures never fail a real request — observability only.
+          Files can be promoted into
+          `packages/testing/src/hotelbeds/fixtures/` to extend the
+          regression suite verbatim.
+        - Response normalization: live shape → adapter contract.
+          Content `name` accepts both `string` and `{content}`;
+          availability response unwraps `hotels.hotels` to match
+          `HotelbedsAvailabilityResponse.hotels`. Hotel `code` is
+          coerced to string at the boundary so downstream typing
+          stays clean.
+        - Typed `HotelbedsHttpError` carries `status`,
+          `headers`, `bodyPreview`, `requestedUrl` so retry logic
+          can branch and ops can debug.
+        - `packages/adapters/hotelbeds/src/fixture-client.ts` —
+          canonical `createFixtureHotelbedsClient` moved from
+          `@bb/testing` so the composition root can pick the
+          fixture kind without a runtime testing-package
+          dependency. `@bb/testing` now thin-re-exports.
+        - `apps/api/src/adapters/hotelbeds/hotelbeds.config.ts` —
+          adapter-local env binding (`HOTELBEDS_CLIENT_KIND` ∈
+          `stub | fixture | live`, plus `HOTELBEDS_API_KEY`,
+          `HOTELBEDS_API_SECRET`, `HOTELBEDS_BASE_URL`,
+          `HOTELBEDS_REQUEST_TIMEOUT_MS`,
+          `HOTELBEDS_MAX_RETRIES`,
+          `HOTELBEDS_RETRY_BASE_DELAY_MS`,
+          `HOTELBEDS_CAPTURE_DIR`,
+          `HOTELBEDS_FIXTURE_DIR`). Default kind is `stub` so a
+          fresh checkout boots without credentials. `live` kind
+          requires API key + secret; `fixture` kind requires a
+          fixture dir. Validation runs at module init so
+          misconfiguration fails loudly.
+        - `HotelbedsModule` switches client by `cfg.kind` and
+          keeps `createProvisionalResolver` on every kind: the
+          booking guard refuses every rate from every client
+          until ops swaps the money-movement resolver. This is
+          deliberate — Phase 2 unlocks HTTP, not bookings.
+        - `packages/adapters/hotelbeds/src/live-client.test.ts` —
+          5 unit tests pin the load-bearing primitives without
+          hitting the network: signing matches the SHA256 vector;
+          `Api-key` + `X-Signature` ride every request; 503
+          retries to eventual 200; 401 is non-retryable;
+          availability shape normalization unwraps
+          `hotels.hotels`. Conformance test (fixture replay
+          against the real DB + MinIO stack) continues to gate
+          adapter behavior end to end.
+        - `vitest.config.ts` — `include` glob extended to
+          `packages/*/*/src/**/*.{test,spec}.ts` so adapter
+          packages (one extra directory level) are discovered.
+        - `.env.example` — new Hotelbeds section with all
+          adapter env vars and inline guidance.
+        - `pnpm typecheck` (27/27), `pnpm lint` (26/26),
+          `pnpm test` (9/9 across 2 files) green.
 - [ ] Adapter conformance suite — formalize ADR-003 conformance
       harness in `packages/testing/` (applies to every adapter;
       Hotelbeds fixture-replay is the first implementation).

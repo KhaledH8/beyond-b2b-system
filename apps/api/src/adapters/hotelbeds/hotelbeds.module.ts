@@ -2,9 +2,12 @@ import { Module } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
 import {
   HotelbedsAdapter,
+  createFixtureHotelbedsClient,
+  createLiveHotelbedsClient,
   createProvisionalResolver,
   createStubHotelbedsClient,
 } from '@bb/adapter-hotelbeds';
+import type { HotelbedsClient } from '@bb/adapter-hotelbeds';
 import { DatabaseModule } from '../../database/database.module';
 import { ObjectStorageModule } from '../../object-storage/object-storage.module';
 import { newUlid } from '../../common/ulid';
@@ -13,28 +16,36 @@ import { PgHotelContentPersistencePort } from './hotel-content.port';
 import { PgMappingPersistencePort } from './mapping-persistence.port';
 import { PgSourcedOfferPersistencePort } from './sourced-offer-persistence.port';
 import { MinioRawPayloadStoragePort } from './raw-payload-storage.port';
+import {
+  loadHotelbedsConfig,
+  readFixtureFiles,
+} from './hotelbeds.config';
+import type { HotelbedsConfig } from './hotelbeds.config';
 
 export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
 
 /**
- * Phase 1 composition-root wiring for the Hotelbeds adapter.
+ * Phase 2 composition-root wiring for the Hotelbeds adapter.
  *
- * Five concrete persistence ports are constructed from Postgres /
- * MinIO providers; the adapter itself is a single singleton with a
- * stub HTTP client (real HTTP lands in Phase 2 once credentials and
- * signing are confirmed).
+ * Three runtime client kinds, selected by `HOTELBEDS_CLIENT_KIND`:
+ *   - `stub`    (default) — every method throws `HotelbedsNotImplementedError`.
+ *                Safe for fresh checkouts that lack credentials.
+ *   - `fixture` — replays JSON files in `HOTELBEDS_FIXTURE_DIR`. Used
+ *                by the conformance suite and by local dev that
+ *                wants the rest of the stack exercised without
+ *                network IO.
+ *   - `live`    — real HTTP against the Hotelbeds Booking + Content
+ *                APIs, with SHA256 X-Signature auth, retry/backoff,
+ *                request timeout, and optional response capture for
+ *                fixture promotion.
  *
- * `createProvisionalResolver` is chosen deliberately: Hotelbeds'
- * commercial money-movement model for this tenant has NOT been
- * confirmed in writing, so every rate returned by this adapter will
- * carry `moneyMovementProvenance = 'PROVISIONAL'` and the booking
- * guard (see `booking/booking-guard.ts`) will refuse to book it.
- * When ops confirms the contract, this module swaps the resolver to
- * `createStaticResolver({...})` or `createPayloadFirstResolver({...})`
- * — a one-line change in exactly one place.
- *
- * `ensureRegistered()` runs once at startup via `OnModuleInit` so the
- * `supply_supplier` row exists before any FK-dependent write.
+ * `createProvisionalResolver` stays on every kind: the booking guard
+ * (`booking/booking-guard.ts`) is the single point that refuses to
+ * book a `PROVISIONAL` rate, and that invariant must hold regardless
+ * of whether the rate came from the stub, a fixture, or live HTTP.
+ * Swapping in `createStaticResolver` / `createPayloadFirstResolver`
+ * is gated on ops confirming Hotelbeds' commercial money-movement
+ * model, not on whether HTTP is live.
  */
 @Module({
   imports: [DatabaseModule, ObjectStorageModule],
@@ -53,15 +64,9 @@ export const HOTELBEDS_ADAPTER = 'HOTELBEDS_ADAPTER' as const;
         offers: PgSourcedOfferPersistencePort,
         rawStorage: MinioRawPayloadStoragePort,
       ): HotelbedsAdapter => {
+        const cfg = loadHotelbedsConfig();
         return new HotelbedsAdapter({
-          client: createStubHotelbedsClient({
-            apiKey: process.env['HOTELBEDS_API_KEY'] ?? '',
-            apiSecret: process.env['HOTELBEDS_API_SECRET'] ?? '',
-            baseUrl:
-              process.env['HOTELBEDS_BASE_URL'] ??
-              'https://api.test.hotelbeds.com',
-            requestTimeoutMs: 15_000,
-          }),
+          client: pickClient(cfg),
           registration,
           rawStorage,
           hotels,
@@ -107,5 +112,30 @@ export class HotelbedsModule implements OnModuleInit {
       displayName: 'Hotelbeds',
       ingestionMode: 'PULL',
     });
+  }
+}
+
+function pickClient(cfg: HotelbedsConfig): HotelbedsClient {
+  switch (cfg.kind) {
+    case 'live':
+      return createLiveHotelbedsClient({
+        apiKey: cfg.apiKey,
+        apiSecret: cfg.apiSecret,
+        baseUrl: cfg.baseUrl,
+        requestTimeoutMs: cfg.requestTimeoutMs,
+        maxRetries: cfg.maxRetries,
+        retryBaseDelayMs: cfg.retryBaseDelayMs,
+        ...(cfg.captureDir !== undefined ? { captureDir: cfg.captureDir } : {}),
+      });
+    case 'fixture':
+      return createFixtureHotelbedsClient(readFixtureFiles(cfg.fixtureDir!));
+    case 'stub':
+    default:
+      return createStubHotelbedsClient({
+        apiKey: cfg.apiKey,
+        apiSecret: cfg.apiSecret,
+        baseUrl: cfg.baseUrl,
+        requestTimeoutMs: cfg.requestTimeoutMs,
+      });
   }
 }
