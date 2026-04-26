@@ -15,6 +15,18 @@ import {
   ChildAgeBandRepository,
   type ChildAgeBandAdminRow,
 } from './child-age-band.repository';
+import {
+  BaseRateRepository,
+  type BaseRateAdminRow,
+} from './base-rate.repository';
+import {
+  OccupancySupplementRepository,
+  type OccupancySupplementAdminRow,
+} from './occupancy-supplement.repository';
+import {
+  MealSupplementRepository,
+  type MealSupplementAdminRow,
+} from './meal-supplement.repository';
 
 // ---------------------------------------------------------------------------
 // Input types
@@ -71,6 +83,55 @@ export interface PatchChildAgeBandInput {
   ageMax?: number;
 }
 
+export interface CreateBaseRateInput {
+  contractId: string;
+  tenantId: string;
+  seasonId: string;
+  roomTypeId: string;
+  ratePlanId: string;
+  occupancyTemplateId: string;
+  includedMealPlanId: string;
+  amountMinorUnits: number;
+  currency: string;
+}
+
+export interface PatchBaseRateInput {
+  amountMinorUnits?: number;
+  includedMealPlanId?: string;
+}
+
+export interface CreateOccupancySupplementInput {
+  contractId: string;
+  tenantId: string;
+  seasonId: string;
+  roomTypeId: string;
+  ratePlanId: string;
+  occupantKind: 'EXTRA_ADULT' | 'EXTRA_CHILD';
+  childAgeBandId: string | null;
+  slotIndex: number;
+  amountMinorUnits: number;
+}
+
+export interface PatchOccupancySupplementInput {
+  amountMinorUnits?: number;
+}
+
+export interface CreateMealSupplementInput {
+  contractId: string;
+  tenantId: string;
+  seasonId: string;
+  roomTypeId: string | null;
+  ratePlanId: string | null;
+  targetMealPlanId: string;
+  occupantKind: 'ADULT' | 'CHILD';
+  childAgeBandId: string | null;
+  amountMinorUnits: number;
+}
+
+export interface PatchMealSupplementInput {
+  amountMinorUnits?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -85,6 +146,12 @@ export class DirectContractsService {
     @Inject(ChildAgeBandRepository)
     private readonly bandRepo: ChildAgeBandRepository,
     @Inject(AuditLogRepository) private readonly audit: AuditLogRepository,
+    @Inject(BaseRateRepository)
+    private readonly baseRateRepo: BaseRateRepository,
+    @Inject(OccupancySupplementRepository)
+    private readonly occSuppRepo: OccupancySupplementRepository,
+    @Inject(MealSupplementRepository)
+    private readonly mealSuppRepo: MealSupplementRepository,
   ) {}
 
   // ---- contracts -----------------------------------------------------------
@@ -467,6 +534,343 @@ export class DirectContractsService {
     const contract = await this.contractRepo.findById(contractId, tenantId);
     if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
     return this.bandRepo.findById(bandId, contractId);
+  }
+
+  // ---- base rates ----------------------------------------------------------
+
+  async createBaseRate(
+    input: CreateBaseRateInput,
+    actorId: string,
+  ): Promise<BaseRateAdminRow> {
+    const contract = await this.contractRepo.findById(
+      input.contractId,
+      input.tenantId,
+    );
+    if (!contract) {
+      throw new NotFoundException(`contract ${input.contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot add base rates to an INACTIVE contract',
+      );
+    }
+    const row = await this.baseRateRepo.insert({
+      id: newUlid(),
+      contractId: input.contractId,
+      seasonId: input.seasonId,
+      roomTypeId: input.roomTypeId,
+      ratePlanId: input.ratePlanId,
+      occupancyTemplateId: input.occupancyTemplateId,
+      includedMealPlanId: input.includedMealPlanId,
+      amountMinorUnits: input.amountMinorUnits,
+      currency: input.currency,
+    });
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'direct_contract_base_rate',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async patchBaseRate(
+    contractId: string,
+    tenantId: string,
+    baseRateId: string,
+    patch: PatchBaseRateInput,
+    actorId: string,
+  ): Promise<BaseRateAdminRow> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot modify base rates on an INACTIVE contract',
+      );
+    }
+    const row = await this.baseRateRepo.patch(baseRateId, contractId, patch);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_base_rate',
+      resourceId: baseRateId,
+      operation: 'PATCH',
+      payload: patch as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async deleteBaseRate(
+    contractId: string,
+    tenantId: string,
+    baseRateId: string,
+    actorId: string,
+  ): Promise<void> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    await this.baseRateRepo.delete(baseRateId, contractId);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_base_rate',
+      resourceId: baseRateId,
+      operation: 'DELETE',
+      payload: { contractId },
+    });
+  }
+
+  async listBaseRates(
+    contractId: string,
+    tenantId: string,
+    seasonId?: string,
+  ): Promise<ReadonlyArray<BaseRateAdminRow>> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.baseRateRepo.list(contractId, seasonId);
+  }
+
+  async findBaseRateById(
+    contractId: string,
+    tenantId: string,
+    baseRateId: string,
+  ): Promise<BaseRateAdminRow | null> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.baseRateRepo.findById(baseRateId, contractId);
+  }
+
+  // ---- occupancy supplements -----------------------------------------------
+
+  async createOccupancySupplement(
+    input: CreateOccupancySupplementInput,
+    actorId: string,
+  ): Promise<OccupancySupplementAdminRow> {
+    const contract = await this.contractRepo.findById(
+      input.contractId,
+      input.tenantId,
+    );
+    if (!contract) {
+      throw new NotFoundException(`contract ${input.contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot add occupancy supplements to an INACTIVE contract',
+      );
+    }
+    if (input.occupantKind === 'EXTRA_CHILD' && !input.childAgeBandId) {
+      throw new BadRequestException(
+        'childAgeBandId is required for EXTRA_CHILD supplements',
+      );
+    }
+    if (input.occupantKind === 'EXTRA_ADULT' && input.childAgeBandId) {
+      throw new BadRequestException(
+        'childAgeBandId must not be set for EXTRA_ADULT supplements',
+      );
+    }
+    const row = await this.occSuppRepo.insert({
+      id: newUlid(),
+      contractId: input.contractId,
+      seasonId: input.seasonId,
+      roomTypeId: input.roomTypeId,
+      ratePlanId: input.ratePlanId,
+      occupantKind: input.occupantKind,
+      childAgeBandId: input.childAgeBandId,
+      slotIndex: input.slotIndex,
+      amountMinorUnits: input.amountMinorUnits,
+      pricingBasis: 'PER_NIGHT_PER_PERSON',
+    });
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'direct_contract_occupancy_supplement',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async patchOccupancySupplement(
+    contractId: string,
+    tenantId: string,
+    supplementId: string,
+    patch: PatchOccupancySupplementInput,
+    actorId: string,
+  ): Promise<OccupancySupplementAdminRow> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot modify occupancy supplements on an INACTIVE contract',
+      );
+    }
+    const row = await this.occSuppRepo.patch(supplementId, contractId, patch);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_occupancy_supplement',
+      resourceId: supplementId,
+      operation: 'PATCH',
+      payload: patch as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async deleteOccupancySupplement(
+    contractId: string,
+    tenantId: string,
+    supplementId: string,
+    actorId: string,
+  ): Promise<void> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    await this.occSuppRepo.delete(supplementId, contractId);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_occupancy_supplement',
+      resourceId: supplementId,
+      operation: 'DELETE',
+      payload: { contractId },
+    });
+  }
+
+  async listOccupancySupplements(
+    contractId: string,
+    tenantId: string,
+    seasonId?: string,
+  ): Promise<ReadonlyArray<OccupancySupplementAdminRow>> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.occSuppRepo.list(contractId, seasonId);
+  }
+
+  async findOccupancySupplementById(
+    contractId: string,
+    tenantId: string,
+    supplementId: string,
+  ): Promise<OccupancySupplementAdminRow | null> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.occSuppRepo.findById(supplementId, contractId);
+  }
+
+  // ---- meal supplements ----------------------------------------------------
+
+  async createMealSupplement(
+    input: CreateMealSupplementInput,
+    actorId: string,
+  ): Promise<MealSupplementAdminRow> {
+    const contract = await this.contractRepo.findById(
+      input.contractId,
+      input.tenantId,
+    );
+    if (!contract) {
+      throw new NotFoundException(`contract ${input.contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot add meal supplements to an INACTIVE contract',
+      );
+    }
+    if (input.occupantKind === 'CHILD' && !input.childAgeBandId) {
+      throw new BadRequestException(
+        'childAgeBandId is required for CHILD meal supplements',
+      );
+    }
+    if (input.occupantKind === 'ADULT' && input.childAgeBandId) {
+      throw new BadRequestException(
+        'childAgeBandId must not be set for ADULT meal supplements',
+      );
+    }
+    const row = await this.mealSuppRepo.insert({
+      id: newUlid(),
+      contractId: input.contractId,
+      seasonId: input.seasonId,
+      roomTypeId: input.roomTypeId,
+      ratePlanId: input.ratePlanId,
+      targetMealPlanId: input.targetMealPlanId,
+      occupantKind: input.occupantKind,
+      childAgeBandId: input.childAgeBandId,
+      amountMinorUnits: input.amountMinorUnits,
+      pricingBasis: 'PER_NIGHT_PER_PERSON',
+    });
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'direct_contract_meal_supplement',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async patchMealSupplement(
+    contractId: string,
+    tenantId: string,
+    supplementId: string,
+    patch: PatchMealSupplementInput,
+    actorId: string,
+  ): Promise<MealSupplementAdminRow> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot modify meal supplements on an INACTIVE contract',
+      );
+    }
+    const row = await this.mealSuppRepo.patch(supplementId, contractId, patch);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_meal_supplement',
+      resourceId: supplementId,
+      operation: 'PATCH',
+      payload: patch as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async deleteMealSupplement(
+    contractId: string,
+    tenantId: string,
+    supplementId: string,
+    actorId: string,
+  ): Promise<void> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    await this.mealSuppRepo.delete(supplementId, contractId);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_meal_supplement',
+      resourceId: supplementId,
+      operation: 'DELETE',
+      payload: { contractId },
+    });
+  }
+
+  async listMealSupplements(
+    contractId: string,
+    tenantId: string,
+    seasonId?: string,
+  ): Promise<ReadonlyArray<MealSupplementAdminRow>> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.mealSuppRepo.list(contractId, seasonId);
+  }
+
+  async findMealSupplementById(
+    contractId: string,
+    tenantId: string,
+    supplementId: string,
+  ): Promise<MealSupplementAdminRow | null> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.mealSuppRepo.findById(supplementId, contractId);
   }
 
   // ---- private helpers -----------------------------------------------------

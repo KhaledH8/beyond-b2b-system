@@ -716,6 +716,683 @@ describeIntegration(
     });
 
     // -----------------------------------------------------------------------
+    // Slice 3 · base rates
+    // -----------------------------------------------------------------------
+
+    describe('base rates · CRUD', () => {
+      let brContractId: string;
+      let brSeasonId: string;
+      let brBaseRateId: string;
+      let roomTypeId: string;
+      let ratePlanId: string;
+      let mealPlanId: string;
+      let occTemplateId: string;
+      let ageBandId: string;
+
+      beforeAll(async () => {
+        const slug = `br-${randomBytes(4).toString('hex')}`;
+
+        // Contract
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `BR-${slug}`,
+          currency: 'EUR',
+        });
+        brContractId = ((await cRes.json()) as AnyJson).id as string;
+
+        // Season
+        const sRes = await post(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/seasons`,
+          { tenantId, name: 'Summer', dateFrom: '2026-06-01', dateTo: '2026-08-31' },
+        );
+        brSeasonId = ((await sRes.json()) as AnyJson).id as string;
+
+        // Activate contract
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${brContractId}?tenantId=${tenantId}`,
+          { status: 'ACTIVE' },
+        );
+
+        // Canonical product dimension rows (hotel-scoped, fresh per run)
+        roomTypeId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_room_type (id, canonical_hotel_id, code, name)
+           VALUES ($1, $2, $3, $4)`,
+          [roomTypeId, hotelId, `DBL-${slug}`, 'Double Room'],
+        );
+
+        ratePlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [ratePlanId, hotelId, `FLEX-${slug}`, 'Flexible Rate', 'PUBLIC_BAR'],
+        );
+
+        mealPlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_meal_plan (id, canonical_hotel_id, code, name)
+           VALUES ($1, $2, $3, $4)`,
+          [mealPlanId, hotelId, `RO-${slug}`, 'Room Only'],
+        );
+
+        occTemplateId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_occupancy_template
+             (id, canonical_hotel_id, room_type_id, base_adults, max_adults, max_children, max_total)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [occTemplateId, hotelId, roomTypeId, 2, 2, 0, 2],
+        );
+
+        ageBandId = newUlid();
+        await pool.query(
+          `INSERT INTO rate_auth_child_age_band (id, contract_id, name, age_min, age_max)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [ageBandId, brContractId, 'Child', 2, 11],
+        );
+      }, 30_000);
+
+      it('creates a base rate', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates`,
+          {
+            tenantId,
+            seasonId: brSeasonId,
+            roomTypeId,
+            ratePlanId,
+            occupancyTemplateId: occTemplateId,
+            includedMealPlanId: mealPlanId,
+            amountMinorUnits: 15000,
+            currency: 'EUR',
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        brBaseRateId = body.id as string;
+        expect(body.contractId).toBe(brContractId);
+        expect(body.seasonId).toBe(brSeasonId);
+        expect(body.amountMinorUnits).toBe(15000);
+        expect(body.currency).toBe('EUR');
+        expect(body.pricingBasis).toBeUndefined();
+      });
+
+      it('lists base rates and supports seasonId filter', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates?tenantId=${tenantId}`,
+        );
+        expect(listRes.status).toBe(200);
+        const body = (await listRes.json()) as AnyJson;
+        expect(body.count).toBeGreaterThanOrEqual(1);
+
+        const filtered = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates?tenantId=${tenantId}&seasonId=${brSeasonId}`,
+        );
+        expect(((await filtered.json()) as AnyJson).count).toBeGreaterThanOrEqual(1);
+      });
+
+      it('gets a single base rate by id', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates?tenantId=${tenantId}`,
+        );
+        const listBody = (await listRes.json()) as AnyJson;
+        const id = listBody.items[0].id as string;
+
+        const res = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates/${id}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).id).toBe(id);
+      });
+
+      it('patches amountMinorUnits on a base rate', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates?tenantId=${tenantId}`,
+        );
+        const id = ((await listRes.json()) as AnyJson).items[0].id as string;
+
+        const res = await patch(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates/${id}?tenantId=${tenantId}`,
+          { amountMinorUnits: 17500 },
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).amountMinorUnits).toBe(17500);
+      });
+
+      it('rejects duplicate base rate for same combo', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates`,
+          {
+            tenantId,
+            seasonId: brSeasonId,
+            roomTypeId,
+            ratePlanId,
+            occupancyTemplateId: occTemplateId,
+            includedMealPlanId: mealPlanId,
+            amountMinorUnits: 9999,
+            currency: 'EUR',
+          },
+        );
+        expect(res.status).toBe(409);
+      });
+
+      it('rejects negative amountMinorUnits', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates`,
+          {
+            tenantId,
+            seasonId: brSeasonId,
+            roomTypeId,
+            ratePlanId,
+            occupancyTemplateId: occTemplateId,
+            includedMealPlanId: mealPlanId,
+            amountMinorUnits: -1,
+            currency: 'EUR',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects unknown FK (bad seasonId)', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates`,
+          {
+            tenantId,
+            seasonId: newUlid(),
+            roomTypeId,
+            ratePlanId,
+            occupancyTemplateId: occTemplateId,
+            includedMealPlanId: mealPlanId,
+            amountMinorUnits: 10000,
+            currency: 'EUR',
+          },
+        );
+        expect(res.status).toBe(409);
+      });
+
+      it('blocks base rate creation on INACTIVE contract', async () => {
+        const slug2 = `br-inactive-${randomBytes(4).toString('hex')}`;
+        const cRes = await post(
+          '/internal/admin/direct-contracts/contracts',
+          {
+            tenantId,
+            canonicalHotelId: hotelId,
+            supplierId,
+            contractCode: `INK-${slug2}`,
+            currency: 'EUR',
+          },
+        );
+        const inactiveId = ((await cRes.json()) as AnyJson).id as string;
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}?tenantId=${tenantId}`,
+          { status: 'INACTIVE' },
+        );
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}/base-rates`,
+          {
+            tenantId,
+            seasonId: brSeasonId,
+            roomTypeId,
+            ratePlanId,
+            occupancyTemplateId: occTemplateId,
+            includedMealPlanId: mealPlanId,
+            amountMinorUnits: 10000,
+            currency: 'EUR',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('deletes a base rate', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates?tenantId=${tenantId}`,
+        );
+        const items = ((await listRes.json()) as AnyJson).items as AnyJson[];
+        const id = items[items.length - 1].id as string;
+
+        const delRes = await del(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates/${id}?tenantId=${tenantId}`,
+        );
+        expect(delRes.status).toBe(204);
+
+        const getRes = await get(
+          `/internal/admin/direct-contracts/contracts/${brContractId}/base-rates/${id}?tenantId=${tenantId}`,
+        );
+        expect(getRes.status).toBe(404);
+      });
+
+      it('records audit log entries for base rate operations', async () => {
+        const { rows } = await pool.query<{ operation: string }>(
+          `SELECT operation FROM admin_audit_log WHERE resource_id = $1 ORDER BY created_at ASC`,
+          [brBaseRateId],
+        );
+        expect(rows.map((r) => r.operation)).toContain('CREATE');
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Slice 3 · occupancy supplements
+    // -----------------------------------------------------------------------
+
+    describe('occupancy supplements · CRUD', () => {
+      let osContractId: string;
+      let osSeasonId: string;
+      let osRoomTypeId: string;
+      let osRatePlanId: string;
+      let osAgeBandId: string;
+
+      beforeAll(async () => {
+        const slug = `os-${randomBytes(4).toString('hex')}`;
+
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `OS-${slug}`,
+          currency: 'EUR',
+        });
+        osContractId = ((await cRes.json()) as AnyJson).id as string;
+
+        const sRes = await post(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/seasons`,
+          { tenantId, name: 'Winter', dateFrom: '2026-12-01', dateTo: '2026-12-31' },
+        );
+        osSeasonId = ((await sRes.json()) as AnyJson).id as string;
+
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${osContractId}?tenantId=${tenantId}`,
+          { status: 'ACTIVE' },
+        );
+
+        osRoomTypeId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_room_type (id, canonical_hotel_id, code, name)
+           VALUES ($1, $2, $3, $4)`,
+          [osRoomTypeId, hotelId, `DBL-${slug}`, 'Double Room'],
+        );
+
+        osRatePlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [osRatePlanId, hotelId, `FLEX-${slug}`, 'Flexible Rate', 'PUBLIC_BAR'],
+        );
+
+        osAgeBandId = newUlid();
+        await pool.query(
+          `INSERT INTO rate_auth_child_age_band (id, contract_id, name, age_min, age_max)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [osAgeBandId, osContractId, 'Child', 2, 11],
+        );
+      }, 30_000);
+
+      it('creates an EXTRA_ADULT occupancy supplement (no childAgeBandId)', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements`,
+          {
+            tenantId,
+            seasonId: osSeasonId,
+            roomTypeId: osRoomTypeId,
+            ratePlanId: osRatePlanId,
+            occupantKind: 'EXTRA_ADULT',
+            amountMinorUnits: 2500,
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        expect(body.occupantKind).toBe('EXTRA_ADULT');
+        expect(body.childAgeBandId).toBeNull();
+        expect(body.pricingBasis).toBe('PER_NIGHT_PER_PERSON');
+        expect(body.slotIndex).toBe(1);
+      });
+
+      it('creates an EXTRA_CHILD supplement with childAgeBandId', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements`,
+          {
+            tenantId,
+            seasonId: osSeasonId,
+            roomTypeId: osRoomTypeId,
+            ratePlanId: osRatePlanId,
+            occupantKind: 'EXTRA_CHILD',
+            childAgeBandId: osAgeBandId,
+            amountMinorUnits: 1500,
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        expect(body.occupantKind).toBe('EXTRA_CHILD');
+        expect(body.childAgeBandId).toBe(osAgeBandId);
+      });
+
+      it('rejects EXTRA_CHILD without childAgeBandId', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements`,
+          {
+            tenantId,
+            seasonId: osSeasonId,
+            roomTypeId: osRoomTypeId,
+            ratePlanId: osRatePlanId,
+            occupantKind: 'EXTRA_CHILD',
+            amountMinorUnits: 1500,
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects EXTRA_ADULT with childAgeBandId', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements`,
+          {
+            tenantId,
+            seasonId: osSeasonId,
+            roomTypeId: osRoomTypeId,
+            ratePlanId: osRatePlanId,
+            occupantKind: 'EXTRA_ADULT',
+            childAgeBandId: osAgeBandId,
+            amountMinorUnits: 2500,
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('patches amountMinorUnits on an occupancy supplement', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements?tenantId=${tenantId}`,
+        );
+        const id = ((await listRes.json()) as AnyJson).items[0].id as string;
+
+        const res = await patch(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements/${id}?tenantId=${tenantId}`,
+          { amountMinorUnits: 3000 },
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).amountMinorUnits).toBe(3000);
+      });
+
+      it('rejects extra keys on occupancy supplement patch', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements?tenantId=${tenantId}`,
+        );
+        const id = ((await listRes.json()) as AnyJson).items[0].id as string;
+
+        const res = await patch(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements/${id}?tenantId=${tenantId}`,
+          { amountMinorUnits: 1000, occupantKind: 'EXTRA_ADULT' },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('blocks INACTIVE contract writes', async () => {
+        const slug2 = `os-ink-${randomBytes(4).toString('hex')}`;
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `OSI-${slug2}`,
+          currency: 'EUR',
+        });
+        const inactiveId = ((await cRes.json()) as AnyJson).id as string;
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}?tenantId=${tenantId}`,
+          { status: 'INACTIVE' },
+        );
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}/occupancy-supplements`,
+          {
+            tenantId,
+            seasonId: osSeasonId,
+            roomTypeId: osRoomTypeId,
+            ratePlanId: osRatePlanId,
+            occupantKind: 'EXTRA_ADULT',
+            amountMinorUnits: 1000,
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('deletes an occupancy supplement', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements?tenantId=${tenantId}`,
+        );
+        const id = ((await listRes.json()) as AnyJson).items[0].id as string;
+
+        const delRes = await del(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements/${id}?tenantId=${tenantId}`,
+        );
+        expect(delRes.status).toBe(204);
+
+        const getRes = await get(
+          `/internal/admin/direct-contracts/contracts/${osContractId}/occupancy-supplements/${id}?tenantId=${tenantId}`,
+        );
+        expect(getRes.status).toBe(404);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Slice 3 · meal supplements
+    // -----------------------------------------------------------------------
+
+    describe('meal supplements · CRUD', () => {
+      let msContractId: string;
+      let msSeasonId: string;
+      let msRoomTypeId: string;
+      let msRatePlanId: string;
+      let msMealPlanId: string;
+      let msAgeBandId: string;
+
+      beforeAll(async () => {
+        const slug = `ms-${randomBytes(4).toString('hex')}`;
+
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `MS-${slug}`,
+          currency: 'EUR',
+        });
+        msContractId = ((await cRes.json()) as AnyJson).id as string;
+
+        const sRes = await post(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/seasons`,
+          { tenantId, name: 'Spring', dateFrom: '2026-04-01', dateTo: '2026-05-31' },
+        );
+        msSeasonId = ((await sRes.json()) as AnyJson).id as string;
+
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${msContractId}?tenantId=${tenantId}`,
+          { status: 'ACTIVE' },
+        );
+
+        msRoomTypeId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_room_type (id, canonical_hotel_id, code, name)
+           VALUES ($1, $2, $3, $4)`,
+          [msRoomTypeId, hotelId, `DBL-${slug}`, 'Double Room'],
+        );
+
+        msRatePlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [msRatePlanId, hotelId, `FLEX-${slug}`, 'Flexible Rate', 'PUBLIC_BAR'],
+        );
+
+        msMealPlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_meal_plan (id, canonical_hotel_id, code, name)
+           VALUES ($1, $2, $3, $4)`,
+          [msMealPlanId, hotelId, `BB-${slug}`, 'Bed and Breakfast'],
+        );
+
+        msAgeBandId = newUlid();
+        await pool.query(
+          `INSERT INTO rate_auth_child_age_band (id, contract_id, name, age_min, age_max)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [msAgeBandId, msContractId, 'Child', 2, 11],
+        );
+      }, 30_000);
+
+      it('creates an ADULT meal supplement (no childAgeBandId, no room/plan scope)', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements`,
+          {
+            tenantId,
+            seasonId: msSeasonId,
+            targetMealPlanId: msMealPlanId,
+            occupantKind: 'ADULT',
+            amountMinorUnits: 1200,
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        expect(body.occupantKind).toBe('ADULT');
+        expect(body.childAgeBandId).toBeNull();
+        expect(body.roomTypeId).toBeNull();
+        expect(body.ratePlanId).toBeNull();
+        expect(body.pricingBasis).toBe('PER_NIGHT_PER_PERSON');
+      });
+
+      it('creates a CHILD meal supplement with childAgeBandId', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements`,
+          {
+            tenantId,
+            seasonId: msSeasonId,
+            targetMealPlanId: msMealPlanId,
+            occupantKind: 'CHILD',
+            childAgeBandId: msAgeBandId,
+            amountMinorUnits: 600,
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        expect(body.occupantKind).toBe('CHILD');
+        expect(body.childAgeBandId).toBe(msAgeBandId);
+      });
+
+      it('creates a meal supplement scoped to room type and rate plan', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements`,
+          {
+            tenantId,
+            seasonId: msSeasonId,
+            roomTypeId: msRoomTypeId,
+            ratePlanId: msRatePlanId,
+            targetMealPlanId: msMealPlanId,
+            occupantKind: 'ADULT',
+            amountMinorUnits: 1500,
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        expect(body.roomTypeId).toBe(msRoomTypeId);
+        expect(body.ratePlanId).toBe(msRatePlanId);
+      });
+
+      it('rejects CHILD without childAgeBandId', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements`,
+          {
+            tenantId,
+            seasonId: msSeasonId,
+            targetMealPlanId: msMealPlanId,
+            occupantKind: 'CHILD',
+            amountMinorUnits: 600,
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects ADULT with childAgeBandId', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements`,
+          {
+            tenantId,
+            seasonId: msSeasonId,
+            targetMealPlanId: msMealPlanId,
+            occupantKind: 'ADULT',
+            childAgeBandId: msAgeBandId,
+            amountMinorUnits: 1200,
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('lists meal supplements and supports seasonId filter', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as AnyJson;
+        expect(body.count).toBeGreaterThanOrEqual(1);
+
+        const filtered = await get(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements?tenantId=${tenantId}&seasonId=${msSeasonId}`,
+        );
+        expect(((await filtered.json()) as AnyJson).count).toBeGreaterThanOrEqual(1);
+      });
+
+      it('patches amountMinorUnits on a meal supplement', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements?tenantId=${tenantId}`,
+        );
+        const id = ((await listRes.json()) as AnyJson).items[0].id as string;
+
+        const res = await patch(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements/${id}?tenantId=${tenantId}`,
+          { amountMinorUnits: 2000 },
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).amountMinorUnits).toBe(2000);
+      });
+
+      it('blocks meal supplement creation on INACTIVE contract', async () => {
+        const slug2 = `ms-ink-${randomBytes(4).toString('hex')}`;
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `MSI-${slug2}`,
+          currency: 'EUR',
+        });
+        const inactiveId = ((await cRes.json()) as AnyJson).id as string;
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}?tenantId=${tenantId}`,
+          { status: 'INACTIVE' },
+        );
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}/meal-supplements`,
+          {
+            tenantId,
+            seasonId: msSeasonId,
+            targetMealPlanId: msMealPlanId,
+            occupantKind: 'ADULT',
+            amountMinorUnits: 1000,
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('deletes a meal supplement', async () => {
+        const listRes = await get(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements?tenantId=${tenantId}`,
+        );
+        const id = ((await listRes.json()) as AnyJson).items[0].id as string;
+
+        const delRes = await del(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements/${id}?tenantId=${tenantId}`,
+        );
+        expect(delRes.status).toBe(204);
+
+        const getRes = await get(
+          `/internal/admin/direct-contracts/contracts/${msContractId}/meal-supplements/${id}?tenantId=${tenantId}`,
+        );
+        expect(getRes.status).toBe(404);
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // HTTP helpers
     // -----------------------------------------------------------------------
 
