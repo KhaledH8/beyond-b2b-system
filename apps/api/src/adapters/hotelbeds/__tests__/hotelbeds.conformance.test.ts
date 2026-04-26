@@ -306,26 +306,53 @@ describeIntegration('hotelbeds adapter · fixture-replay conformance', () => {
   });
 
   it('does not touch any authored-rate tables (ADR-021 invariant)', async () => {
-    // Phase A Slice 1 has created the rate_auth_* tables. The invariant
-    // is no longer "tables absent" but "the Hotelbeds sourced flow writes
-    // zero rows into any authored table". A non-zero count means the
-    // sourced path leaked a write into the authored schema.
-    const authoredTables = [
-      'rate_auth_contract',
-      'rate_auth_season',
-      'rate_auth_child_age_band',
-      'rate_auth_base_rate',
-      'rate_auth_occupancy_supplement',
-      'rate_auth_meal_supplement',
+    // Phase A Slice 1 created the rate_auth_* tables; Phase A Slice 2 added
+    // the DirectContracts module which writes to these tables for its own
+    // tenants. The Hotelbeds sourced path must write ZERO rows scoped to
+    // the Hotelbeds test tenant. Other tenants' rows are irrelevant.
+    const checks: Array<{ label: string; sql: string; params: unknown[] }> = [
+      {
+        label: 'rate_auth_contract',
+        sql: `SELECT COUNT(*) AS count FROM rate_auth_contract WHERE tenant_id = $1`,
+        params: [tenantId],
+      },
+      {
+        label: 'rate_auth_season',
+        sql: `SELECT COUNT(*) AS count FROM rate_auth_season
+              WHERE contract_id IN (SELECT id FROM rate_auth_contract WHERE tenant_id = $1)`,
+        params: [tenantId],
+      },
+      {
+        label: 'rate_auth_child_age_band',
+        sql: `SELECT COUNT(*) AS count FROM rate_auth_child_age_band
+              WHERE contract_id IN (SELECT id FROM rate_auth_contract WHERE tenant_id = $1)`,
+        params: [tenantId],
+      },
+      {
+        label: 'rate_auth_base_rate',
+        sql: `SELECT COUNT(*) AS count FROM rate_auth_base_rate
+              WHERE contract_id IN (SELECT id FROM rate_auth_contract WHERE tenant_id = $1)`,
+        params: [tenantId],
+      },
+      {
+        label: 'rate_auth_occupancy_supplement',
+        sql: `SELECT COUNT(*) AS count FROM rate_auth_occupancy_supplement
+              WHERE contract_id IN (SELECT id FROM rate_auth_contract WHERE tenant_id = $1)`,
+        params: [tenantId],
+      },
+      {
+        label: 'rate_auth_meal_supplement',
+        sql: `SELECT COUNT(*) AS count FROM rate_auth_meal_supplement
+              WHERE contract_id IN (SELECT id FROM rate_auth_contract WHERE tenant_id = $1)`,
+        params: [tenantId],
+      },
     ];
 
-    for (const table of authoredTables) {
-      const { rows } = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM ${table}`,
-      );
+    for (const { label, sql, params } of checks) {
+      const { rows } = await pool.query<{ count: string }>(sql, params);
       expect(
         Number(rows[0]!.count),
-        `${table} must have 0 rows after the Hotelbeds sourced flow`,
+        `${label} must have 0 rows for the Hotelbeds tenant after the sourced flow`,
       ).toBe(0);
     }
   });

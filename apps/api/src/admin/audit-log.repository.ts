@@ -3,7 +3,7 @@ import type { Pool } from '@bb/db';
 import { PG_POOL } from '../database/database.module';
 import { newUlid } from '../common/ulid';
 
-export type AuditOperation = 'CREATE' | 'PATCH' | 'SOFT_DELETE';
+export type AuditOperation = 'CREATE' | 'PATCH' | 'SOFT_DELETE' | 'DELETE';
 
 export interface AuditEntry {
   readonly tenantId: string;
