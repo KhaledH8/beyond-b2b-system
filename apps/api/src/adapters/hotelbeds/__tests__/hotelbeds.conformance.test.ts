@@ -306,16 +306,27 @@ describeIntegration('hotelbeds adapter · fixture-replay conformance', () => {
   });
 
   it('does not touch any authored-rate tables (ADR-021 invariant)', async () => {
-    const { rows } = await pool.query<{ table_name: string }>(
-      `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public'
-           AND table_name LIKE 'rate_auth_%'`,
-    );
-    // Phase 1 has not migrated any authored-rate tables. This test
-    // simultaneously documents the invariant and catches the day an
-    // authored-rate migration lands but the sourced-only path starts
-    // writing into it. When Phase 2 adds rate_auth_* tables, tighten
-    // this assertion to "row count == 0" rather than "table missing".
-    expect(rows.length).toBe(0);
+    // Phase A Slice 1 has created the rate_auth_* tables. The invariant
+    // is no longer "tables absent" but "the Hotelbeds sourced flow writes
+    // zero rows into any authored table". A non-zero count means the
+    // sourced path leaked a write into the authored schema.
+    const authoredTables = [
+      'rate_auth_contract',
+      'rate_auth_season',
+      'rate_auth_child_age_band',
+      'rate_auth_base_rate',
+      'rate_auth_occupancy_supplement',
+      'rate_auth_meal_supplement',
+    ];
+
+    for (const table of authoredTables) {
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM ${table}`,
+      );
+      expect(
+        Number(rows[0]!.count),
+        `${table} must have 0 rows after the Hotelbeds sourced flow`,
+      ).toBe(0);
+    }
   });
 });
