@@ -5,6 +5,7 @@ import {
   MarkupRuleAdminRepository,
   type MarkupRuleAdminRow,
 } from './markup-rule.repository';
+import { AuditLogRepository } from './audit-log.repository';
 
 export interface CreateMarkupRuleInput {
   tenantId: string;
@@ -44,13 +45,18 @@ export class MarkupRuleAdminService {
   constructor(
     @Inject(MarkupRuleAdminRepository)
     private readonly repo: MarkupRuleAdminRepository,
+    @Inject(AuditLogRepository)
+    private readonly audit: AuditLogRepository,
   ) {}
 
-  async create(input: CreateMarkupRuleInput): Promise<MarkupRuleAdminRow> {
+  async create(
+    input: CreateMarkupRuleInput,
+    actorId: string,
+  ): Promise<MarkupRuleAdminRow> {
     requireSingleScopeKey(input);
     requireValidWindow(input.validFrom, input.validTo);
 
-    return this.repo.insert({
+    const row = await this.repo.insert({
       id: newUlid(),
       tenantId: input.tenantId,
       scope: input.scope,
@@ -66,12 +72,22 @@ export class MarkupRuleAdminService {
       ...(input.validFrom !== undefined ? { validFrom: input.validFrom } : {}),
       ...(input.validTo !== undefined ? { validTo: input.validTo } : {}),
     });
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'markup_rule',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
   }
 
   async patch(
     id: string,
     tenantId: string,
     patch: PatchMarkupRuleInput,
+    actorId: string,
   ): Promise<MarkupRuleAdminRow> {
     // If the patch includes a window edit, evaluate the result of
     // composing patch + existing row and reject early when the
@@ -87,11 +103,33 @@ export class MarkupRuleAdminService {
         patch.validTo !== undefined ? patch.validTo : existing.validTo;
       requireValidWindow(nextFrom ?? undefined, nextTo ?? undefined);
     }
-    return this.repo.patch(id, tenantId, patch);
+    const row = await this.repo.patch(id, tenantId, patch);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'markup_rule',
+      resourceId: id,
+      operation: 'PATCH',
+      payload: patch as unknown as Record<string, unknown>,
+    });
+    return row;
   }
 
-  softDelete(id: string, tenantId: string): Promise<MarkupRuleAdminRow> {
-    return this.repo.softDelete(id, tenantId);
+  async softDelete(
+    id: string,
+    tenantId: string,
+    actorId: string,
+  ): Promise<MarkupRuleAdminRow> {
+    const row = await this.repo.softDelete(id, tenantId);
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'markup_rule',
+      resourceId: id,
+      operation: 'SOFT_DELETE',
+      payload: {},
+    });
+    return row;
   }
 
   findById(id: string, tenantId: string): Promise<MarkupRuleAdminRow | null> {

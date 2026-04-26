@@ -32,6 +32,7 @@ import { ObjectStorageModule } from '../../object-storage/object-storage.module'
 loadDotenv({ path: path.resolve(__dirname, '../../../../../.env') });
 
 const TEST_INTERNAL_KEY = 'bb-internal-test-key';
+const TEST_ACTOR_ID = 'test-ops-user';
 const HAS_DATABASE = Boolean(process.env['DATABASE_URL']);
 const describeIntegration = HAS_DATABASE ? describe : describe.skip;
 
@@ -426,6 +427,7 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
       headers: {
         'content-type': 'application/json',
         'x-internal-key': TEST_INTERNAL_KEY,
+        'x-actor-id': TEST_ACTOR_ID,
       },
       body: JSON.stringify(body),
     });
@@ -437,6 +439,7 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
       headers: {
         'content-type': 'application/json',
         'x-internal-key': TEST_INTERNAL_KEY,
+        'x-actor-id': TEST_ACTOR_ID,
       },
       body: JSON.stringify(body),
     });
@@ -445,7 +448,10 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
     const url = await urlFor(app.getHttpServer(), path);
     return fetch(url, {
       method: 'DELETE',
-      headers: { 'x-internal-key': TEST_INTERNAL_KEY },
+      headers: {
+        'x-internal-key': TEST_INTERNAL_KEY,
+        'x-actor-id': TEST_ACTOR_ID,
+      },
     });
   }
   async function get(path: string): Promise<Response> {
@@ -455,6 +461,75 @@ describeIntegration('admin controllers · CRUD over pricing + merchandising', ()
       headers: { 'x-internal-key': TEST_INTERNAL_KEY },
     });
   }
+
+  describe('audit log', () => {
+    it('writes a CREATE entry for markup rule', async () => {
+      const res = await post('/internal/admin/pricing/markup-rules', {
+        tenantId,
+        scope: 'CHANNEL',
+        accountType: 'SUBSCRIBER',
+        percentValue: '2.0000',
+        priority: 0,
+      });
+      expect(res.status).toBe(201);
+      const body: AnyJson = await res.json();
+      const { rows } = await pool.query<{
+        actor_id: string;
+        operation: string;
+        resource_type: string;
+      }>(
+        `SELECT actor_id, operation, resource_type
+           FROM admin_audit_log
+          WHERE resource_id = $1`,
+        [body.id],
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0]!.actor_id).toBe(TEST_ACTOR_ID);
+      expect(rows[0]!.operation).toBe('CREATE');
+      expect(rows[0]!.resource_type).toBe('markup_rule');
+    });
+
+    it('writes CREATE, PATCH, SOFT_DELETE entries for a promotion', async () => {
+      const createRes = await post('/internal/admin/merchandising/promotions', {
+        tenantId,
+        supplierHotelId,
+        kind: 'FEATURED',
+        priority: 1,
+      });
+      expect(createRes.status).toBe(201);
+      const created: AnyJson = await createRes.json();
+      const promoId: string = created.id;
+
+      await patch(
+        `/internal/admin/merchandising/promotions/${promoId}?tenantId=${tenantId}`,
+        { priority: 2 },
+      );
+
+      const url = await urlFor(
+        app.getHttpServer(),
+        `/internal/admin/merchandising/promotions/${promoId}?tenantId=${tenantId}`,
+      );
+      await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          'x-internal-key': TEST_INTERNAL_KEY,
+          'x-actor-id': TEST_ACTOR_ID,
+        },
+      });
+
+      const { rows } = await pool.query<{ operation: string }>(
+        `SELECT operation FROM admin_audit_log
+          WHERE resource_id = $1
+          ORDER BY created_at ASC`,
+        [promoId],
+      );
+      expect(rows.map((r) => r.operation)).toEqual([
+        'CREATE',
+        'PATCH',
+        'SOFT_DELETE',
+      ]);
+    });
+  });
 
   describe('unauthenticated requests', () => {
     it('returns 401 when X-Internal-Key header is missing', async () => {

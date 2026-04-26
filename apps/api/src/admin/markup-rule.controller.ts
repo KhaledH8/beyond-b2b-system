@@ -12,6 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
+import { Actor } from '../internal-auth/actor.decorator';
+import type { InternalActor } from '../internal-auth/internal-actor';
 import type { AccountType, MarkupRuleScope } from '@bb/domain';
 import {
   ENUM_ACCOUNT_TYPE,
@@ -59,8 +61,11 @@ export class MarkupRuleAdminController {
   ) {}
 
   @Post()
-  async create(@Body() body: unknown): Promise<MarkupRuleAdminRow> {
-    return this.service.create(parseCreate(body));
+  async create(
+    @Body() body: unknown,
+    @Actor() actor: InternalActor,
+  ): Promise<MarkupRuleAdminRow> {
+    return this.service.create(parseCreate(body), actor.actorId);
   }
 
   @Get()
@@ -88,18 +93,20 @@ export class MarkupRuleAdminController {
     @Param('id') id: string,
     @Query('tenantId') tenantIdRaw: string,
     @Body() body: unknown,
+    @Actor() actor: InternalActor,
   ): Promise<MarkupRuleAdminRow> {
     const tenantId = requireUlidQuery(tenantIdRaw, 'tenantId');
-    return this.service.patch(id, tenantId, parsePatch(body));
+    return this.service.patch(id, tenantId, parsePatch(body), actor.actorId);
   }
 
   @Delete(':id')
   async softDelete(
     @Param('id') id: string,
     @Query('tenantId') tenantIdRaw: string,
+    @Actor() actor: InternalActor,
   ): Promise<MarkupRuleAdminRow> {
     const tenantId = requireUlidQuery(tenantIdRaw, 'tenantId');
-    return this.service.softDelete(id, tenantId);
+    return this.service.softDelete(id, tenantId, actor.actorId);
   }
 }
 

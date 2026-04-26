@@ -12,6 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
+import { Actor } from '../internal-auth/actor.decorator';
+import type { InternalActor } from '../internal-auth/internal-actor';
 import type { AccountType, PromotionKind } from '@bb/domain';
 import {
   ENUM_ACCOUNT_TYPE,
@@ -56,8 +58,11 @@ export class PromotionAdminController {
   ) {}
 
   @Post()
-  async create(@Body() body: unknown): Promise<PromotionAdminRow> {
-    return this.service.create(parseCreate(body));
+  async create(
+    @Body() body: unknown,
+    @Actor() actor: InternalActor,
+  ): Promise<PromotionAdminRow> {
+    return this.service.create(parseCreate(body), actor.actorId);
   }
 
   @Get()
@@ -85,18 +90,20 @@ export class PromotionAdminController {
     @Param('id') id: string,
     @Query('tenantId') tenantIdRaw: string,
     @Body() body: unknown,
+    @Actor() actor: InternalActor,
   ): Promise<PromotionAdminRow> {
     const tenantId = requireUlidQuery(tenantIdRaw, 'tenantId');
-    return this.service.patch(id, tenantId, parsePatch(body));
+    return this.service.patch(id, tenantId, parsePatch(body), actor.actorId);
   }
 
   @Delete(':id')
   async softDelete(
     @Param('id') id: string,
     @Query('tenantId') tenantIdRaw: string,
+    @Actor() actor: InternalActor,
   ): Promise<PromotionAdminRow> {
     const tenantId = requireUlidQuery(tenantIdRaw, 'tenantId');
-    return this.service.softDelete(id, tenantId);
+    return this.service.softDelete(id, tenantId, actor.actorId);
   }
 }
 
