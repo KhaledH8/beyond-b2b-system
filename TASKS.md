@@ -789,6 +789,53 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
               null; reject patch on `supplierHotelId`
         - `pnpm typecheck` (29/29), `pnpm lint` (28/28),
           `pnpm test` (42/42 across 6 files) green.
+- [x] **Internal API key auth guard** — `InternalAuthGuard` + `@Actor()`
+      decorator applied to all `/internal/...` endpoints. `X-Internal-Api-Key`
+      header validated against `INTERNAL_API_KEY` env var. Missing or
+      mismatched key → 401. Actor extracted into request context and available
+      to all controller methods via `@Actor() actor: InternalActor`.
+- [x] **Admin audit log** — `admin_audit_log` table (`id`, `tenant_id`,
+      `actor_id`, `resource_type`, `resource_id`, `operation`, `payload`,
+      `created_at`). `AuditLogRepository` is write-only and append-only.
+      `AuditOperation ∈ {CREATE | PATCH | SOFT_DELETE | DELETE}`.
+      `DELETE` was added to the DB CHECK constraint in migration
+      `core/20260430000001_admin_audit_log_add_delete_op.ts`.
+- [x] **Phase A authored pricing schema — Slice 1 (ADR-022)** — migration
+      `infra/migrations/authored/20260429000001_authored_phase_a_rate_schema.ts`.
+      Six tables under `rate_auth_*` prefix: `rate_auth_contract`,
+      `rate_auth_season`, `rate_auth_child_age_band`, `rate_auth_base_rate`,
+      `rate_auth_occupancy_supplement`, `rate_auth_meal_supplement`.
+      Composite FK design: `UNIQUE(id, contract_id)` on season and age band
+      tables makes `(id, contract_id)` valid composite FK targets; all child
+      tables reference `(season_id, contract_id)` or
+      `(child_age_band_id, contract_id)` so the DB enforces same-contract
+      membership without application code. MATCH SIMPLE handles nullable
+      `child_age_band_id` correctly for EXTRA_ADULT rows. Date-ordering
+      enforced by DB CHECK; season non-overlap enforced at service layer.
+      Rollback drops in reverse FK order.
+- [x] **DirectContracts module — Slice 2 (ADR-022)** — contract, season,
+      and child age band CRUD at
+      `/internal/admin/direct-contracts/{contracts,contracts/:id/seasons,
+      contracts/:contractId/child-age-bands}`, all behind `InternalAuthGuard`.
+      Service invariants: contracts are created DRAFT only; DRAFT→ACTIVE
+      requires ≥1 season; INACTIVE is terminal and immutable; supplier must
+      have `source_type = 'DIRECT'`. Season creation uses a serializable
+      `SELECT ... FOR UPDATE` + overlap check + INSERT in one transaction.
+      `requireDateOrder` called before the transaction so invalid date order
+      returns 400 (not a DB 23514 inside the catch → 500 path). Seasons and
+      child age bands are hard-deleted; FK guards block deletion while base
+      rates or supplements reference them (DB 23503 → 409). Tenant scoping
+      flows through the contract row; child tables carry no direct
+      `tenant_id`. Audit log emits `CREATE | PATCH | SOFT_DELETE | DELETE`
+      on every mutating operation. `pg` DATE type parser registered in
+      `packages/db/src/pool.ts` (`types.setTypeParser(1082, ...)`) to return
+      raw `YYYY-MM-DD` strings and prevent timezone-based date drift.
+      All 91 tests green including the Hotelbeds conformance test, which was
+      updated to scope authored-table row-count assertions by `tenant_id` to
+      isolate from concurrent test-file writes.
+- [x] **ADR-022 and ADR-023** — `docs/adrs/ADR-022-authored-direct-pricing-core.md`
+      and `docs/adrs/ADR-023-authored-direct-pricing-restrictions-cancellation.md`
+      written and recorded.
 - [ ] Pricing layer follow-ups (sequenced):
         - Multi-supplier search (currently calls Hotelbeds only).
         - Currency conversion step (`CURRENCY_CONVERSION` trace kind
