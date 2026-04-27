@@ -291,4 +291,35 @@ export class FxRateService {
       this.ecbConfig,
     );
   }
+
+  /**
+   * OXR-only variant for booking-time FX lock fallback (ADR-024 C5).
+   *
+   * The booking-time lock provider set is restricted to STRIPE and OXR
+   * by schema CHECK (`booking_fx_lock_provider_chk`). ECB's daily
+   * publish cadence is incompatible with a card-charge contract, so
+   * the C5 resolver must NOT consult ECB even though the search-time
+   * service does. This method bakes that restriction into the call
+   * site by passing an empty ECB array to `BatchConverter`, so any
+   * `convert()` that misses OXR returns `NO_RATE` rather than silently
+   * falling through to ECB.
+   *
+   * Search code keeps using `loadConverter` (both tiers).
+   */
+  async loadOxrOnlyConverter(
+    asOf: Date = new Date(),
+  ): Promise<BatchConverter> {
+    const oxr = await this.repository.findFreshSnapshots(
+      'OXR',
+      asOf,
+      this.oxrConfig.freshnessTtlMinutes,
+    );
+    return new BatchConverter(
+      oxr,
+      [],
+      asOf,
+      this.oxrConfig,
+      this.ecbConfig,
+    );
+  }
 }
