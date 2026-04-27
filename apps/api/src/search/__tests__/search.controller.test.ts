@@ -330,17 +330,36 @@ describeIntegration('search controller · authored direct contracts merge', () =
     );
     const hotelbedsSupplierHotelId = hsRows[0]!.id;
 
-    canonicalHotelId = newUlid();
-    await pool.query(
-      `INSERT INTO hotel_canonical (id, name) VALUES ($1, $2)`,
-      [canonicalHotelId, `Authored Test Hotel ${slug}`],
+    // The suite is re-runnable on a live DB. `hotel_supplier` for code
+    // '1000073' persists across runs, and `hotel_mapping_active_supplier_uq`
+    // forbids a second active mapping for the same `hotel_supplier_id`.
+    // Reuse the existing mapping's canonical hotel when one is already
+    // present; otherwise create a fresh pair.
+    const { rows: existingMapping } = await pool.query<{
+      canonical_hotel_id: string;
+    }>(
+      `SELECT canonical_hotel_id
+         FROM hotel_mapping
+        WHERE hotel_supplier_id = $1
+          AND mapping_status NOT IN ('REJECTED', 'SUPERSEDED')
+        LIMIT 1`,
+      [hotelbedsSupplierHotelId],
     );
-    await pool.query(
-      `INSERT INTO hotel_mapping
-         (id, canonical_hotel_id, hotel_supplier_id, mapping_status, mapping_method)
-       VALUES ($1, $2, $3, 'CONFIRMED', 'DETERMINISTIC')`,
-      [newUlid(), canonicalHotelId, hotelbedsSupplierHotelId],
-    );
+    if (existingMapping.length > 0) {
+      canonicalHotelId = existingMapping[0]!.canonical_hotel_id;
+    } else {
+      canonicalHotelId = newUlid();
+      await pool.query(
+        `INSERT INTO hotel_canonical (id, name) VALUES ($1, $2)`,
+        [canonicalHotelId, `Authored Test Hotel ${slug}`],
+      );
+      await pool.query(
+        `INSERT INTO hotel_mapping
+           (id, canonical_hotel_id, hotel_supplier_id, mapping_status, mapping_method)
+         VALUES ($1, $2, $3, 'CONFIRMED', 'DETERMINISTIC')`,
+        [newUlid(), canonicalHotelId, hotelbedsSupplierHotelId],
+      );
+    }
 
     // DIRECT supplier + active contract on the same canonical hotel.
     const directSupplierId = newUlid();

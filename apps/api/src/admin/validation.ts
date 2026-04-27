@@ -150,6 +150,17 @@ export function optionalIsoTimestamp(
   return v;
 }
 
+export function requireIsoTimestamp(
+  obj: Record<string, unknown>,
+  key: string,
+): string {
+  const v = optionalIsoTimestamp(obj, key);
+  if (v === undefined) {
+    throw new BadRequestException(`Missing required ISO 8601 timestamp: ${key}`);
+  }
+  return v;
+}
+
 export function requireEnum<T extends string>(
   obj: Record<string, unknown>,
   key: string,

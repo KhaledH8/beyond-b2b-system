@@ -27,6 +27,15 @@ import {
   MealSupplementRepository,
   type MealSupplementAdminRow,
 } from './meal-supplement.repository';
+import {
+  RestrictionRepository,
+  type RestrictionAdminRow,
+} from './restriction.repository';
+import {
+  RESTRICTION_KINDS_FORBIDDEN_FOR_CONTRACT_SCOPED,
+  validateRestrictionParams,
+  type RestrictionKind,
+} from './validation';
 
 // ---------------------------------------------------------------------------
 // Input types
@@ -132,6 +141,34 @@ export interface PatchMealSupplementInput {
   amountMinorUnits?: number;
 }
 
+export interface CreateContractRestrictionInput {
+  contractId: string;
+  tenantId: string;
+  supplierId: string;
+  canonicalHotelId: string;
+  ratePlanId: string | null;
+  roomTypeId: string | null;
+  seasonId: string | null;
+  stayDate: string;
+  restrictionKind: RestrictionKind;
+  params: Record<string, unknown>;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export interface CreateSupplierRestrictionInput {
+  tenantId: string;
+  supplierId: string;
+  canonicalHotelId: string;
+  ratePlanId: string | null;
+  roomTypeId: string | null;
+  stayDate: string;
+  restrictionKind: RestrictionKind;
+  params: Record<string, unknown>;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -152,6 +189,8 @@ export class DirectContractsService {
     private readonly occSuppRepo: OccupancySupplementRepository,
     @Inject(MealSupplementRepository)
     private readonly mealSuppRepo: MealSupplementRepository,
+    @Inject(RestrictionRepository)
+    private readonly restrictionRepo: RestrictionRepository,
   ) {}
 
   // ---- contracts -----------------------------------------------------------
@@ -871,6 +910,309 @@ export class DirectContractsService {
     const contract = await this.contractRepo.findById(contractId, tenantId);
     if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
     return this.mealSuppRepo.findById(supplementId, contractId);
+  }
+
+  // ---- restrictions (ADR-023) ----------------------------------------------
+  //
+  // Two surfaces, kept deliberately separate:
+  //
+  //   • Contract-scoped: writes / reads keyed on a contract URL param.
+  //     INACTIVE contracts block writes (mirrors Phase A D7). Composite
+  //     FK on (season_id, contract_id) → rate_auth_season(id, contract_id)
+  //     enforces same-contract membership at the DB layer when seasonId
+  //     is non-null. RELEASE_HOURS / CUTOFF_HOURS are rejected here in
+  //     Phase B per the user's explicit constraint.
+  //
+  //   • Supplier-default: writes / reads with `contract_id IS NULL`.
+  //     The supplier must exist with `source_type = 'DIRECT'` so this
+  //     stays inside the direct-contracts module's mental model.
+  //     Channel-manager kinds (RELEASE_HOURS / CUTOFF_HOURS) are
+  //     allowed here so the model remains uniform when an adapter
+  //     ships in a future phase.
+  //
+  // Mutation surface is create + supersede only — no patch, no delete
+  // (ADR-023 D8). Audit semantics use CREATE for the new row and PATCH
+  // on the old row when superseding, never a new SUPERSEDE operation
+  // value, per the user's instruction.
+
+  async createContractRestriction(
+    input: CreateContractRestrictionInput,
+    actorId: string,
+  ): Promise<RestrictionAdminRow> {
+    if (RESTRICTION_KINDS_FORBIDDEN_FOR_CONTRACT_SCOPED.has(input.restrictionKind)) {
+      throw new BadRequestException(
+        `restriction kind ${input.restrictionKind} is not allowed on a contract-scoped restriction in Phase B`,
+      );
+    }
+    validateRestrictionParams(input.restrictionKind, input.params);
+
+    const contract = await this.contractRepo.findById(
+      input.contractId,
+      input.tenantId,
+    );
+    if (!contract) {
+      throw new NotFoundException(`contract ${input.contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot add restrictions to an INACTIVE contract',
+      );
+    }
+    if (input.supplierId !== contract.supplierId) {
+      throw new BadRequestException(
+        'restriction supplierId must match the contract supplierId',
+      );
+    }
+    if (input.canonicalHotelId !== contract.canonicalHotelId) {
+      throw new BadRequestException(
+        'restriction canonicalHotelId must match the contract canonicalHotelId',
+      );
+    }
+
+    const row = await this.restrictionRepo.insert({
+      id: newUlid(),
+      tenantId: input.tenantId,
+      supplierId: input.supplierId,
+      canonicalHotelId: input.canonicalHotelId,
+      ratePlanId: input.ratePlanId,
+      roomTypeId: input.roomTypeId,
+      contractId: input.contractId,
+      seasonId: input.seasonId,
+      stayDate: input.stayDate,
+      restrictionKind: input.restrictionKind,
+      params: input.params,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo,
+    });
+
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'direct_contract_restriction',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async createSupplierRestriction(
+    input: CreateSupplierRestrictionInput,
+    actorId: string,
+  ): Promise<RestrictionAdminRow> {
+    validateRestrictionParams(input.restrictionKind, input.params);
+    await this.requireDirectSupplier(input.supplierId);
+
+    const row = await this.restrictionRepo.insert({
+      id: newUlid(),
+      tenantId: input.tenantId,
+      supplierId: input.supplierId,
+      canonicalHotelId: input.canonicalHotelId,
+      ratePlanId: input.ratePlanId,
+      roomTypeId: input.roomTypeId,
+      contractId: null,
+      seasonId: null,
+      stayDate: input.stayDate,
+      restrictionKind: input.restrictionKind,
+      params: input.params,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo,
+    });
+
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'supplier_default_restriction',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async supersedeContractRestriction(
+    contractId: string,
+    tenantId: string,
+    oldId: string,
+    newInput: CreateContractRestrictionInput,
+    actorId: string,
+  ): Promise<RestrictionAdminRow> {
+    if (RESTRICTION_KINDS_FORBIDDEN_FOR_CONTRACT_SCOPED.has(newInput.restrictionKind)) {
+      throw new BadRequestException(
+        `restriction kind ${newInput.restrictionKind} is not allowed on a contract-scoped restriction in Phase B`,
+      );
+    }
+    validateRestrictionParams(newInput.restrictionKind, newInput.params);
+
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) {
+      throw new NotFoundException(`contract ${contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot supersede restrictions on an INACTIVE contract',
+      );
+    }
+    if (newInput.supplierId !== contract.supplierId) {
+      throw new BadRequestException(
+        'restriction supplierId must match the contract supplierId',
+      );
+    }
+    if (newInput.canonicalHotelId !== contract.canonicalHotelId) {
+      throw new BadRequestException(
+        'restriction canonicalHotelId must match the contract canonicalHotelId',
+      );
+    }
+
+    const result = await this.restrictionRepo.supersede({
+      oldId,
+      requireContractId: contractId,
+      newRow: {
+        id: newUlid(),
+        tenantId: newInput.tenantId,
+        supplierId: newInput.supplierId,
+        canonicalHotelId: newInput.canonicalHotelId,
+        ratePlanId: newInput.ratePlanId,
+        roomTypeId: newInput.roomTypeId,
+        contractId,
+        seasonId: newInput.seasonId,
+        stayDate: newInput.stayDate,
+        restrictionKind: newInput.restrictionKind,
+        params: newInput.params,
+        effectiveFrom: newInput.effectiveFrom,
+        effectiveTo: newInput.effectiveTo,
+      },
+    });
+
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_restriction',
+      resourceId: result.newRow.id,
+      operation: 'CREATE',
+      payload: {
+        ...(newInput as unknown as Record<string, unknown>),
+        supersedesId: oldId,
+      },
+    });
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_restriction',
+      resourceId: oldId,
+      operation: 'PATCH',
+      payload: { supersededById: result.newRow.id },
+    });
+
+    return result.newRow;
+  }
+
+  async supersedeSupplierRestriction(
+    tenantId: string,
+    oldId: string,
+    newInput: CreateSupplierRestrictionInput,
+    actorId: string,
+  ): Promise<RestrictionAdminRow> {
+    validateRestrictionParams(newInput.restrictionKind, newInput.params);
+    await this.requireDirectSupplier(newInput.supplierId);
+
+    // Cross-tenant guard: the old row must belong to the caller's
+    // tenant. The repo's `supersede` does not filter by tenant; we
+    // do it here so a wrong-tenant supersede returns 404.
+    const existing = await this.restrictionRepo.findById(oldId, tenantId);
+    if (!existing) {
+      throw new NotFoundException(`restriction ${oldId} not found`);
+    }
+    if (existing.contractId !== null) {
+      throw new NotFoundException(
+        `restriction ${oldId} is contract-scoped; use the contract-scoped supersede endpoint`,
+      );
+    }
+
+    const result = await this.restrictionRepo.supersede({
+      oldId,
+      requireContractId: null,
+      newRow: {
+        id: newUlid(),
+        tenantId: newInput.tenantId,
+        supplierId: newInput.supplierId,
+        canonicalHotelId: newInput.canonicalHotelId,
+        ratePlanId: newInput.ratePlanId,
+        roomTypeId: newInput.roomTypeId,
+        contractId: null,
+        seasonId: null,
+        stayDate: newInput.stayDate,
+        restrictionKind: newInput.restrictionKind,
+        params: newInput.params,
+        effectiveFrom: newInput.effectiveFrom,
+        effectiveTo: newInput.effectiveTo,
+      },
+    });
+
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'supplier_default_restriction',
+      resourceId: result.newRow.id,
+      operation: 'CREATE',
+      payload: {
+        ...(newInput as unknown as Record<string, unknown>),
+        supersedesId: oldId,
+      },
+    });
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'supplier_default_restriction',
+      resourceId: oldId,
+      operation: 'PATCH',
+      payload: { supersededById: result.newRow.id },
+    });
+
+    return result.newRow;
+  }
+
+  async findContractRestrictionById(
+    contractId: string,
+    tenantId: string,
+    id: string,
+  ): Promise<RestrictionAdminRow | null> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.restrictionRepo.findContractScopedById(id, contractId);
+  }
+
+  async findSupplierRestrictionById(
+    tenantId: string,
+    id: string,
+  ): Promise<RestrictionAdminRow | null> {
+    const row = await this.restrictionRepo.findById(id, tenantId);
+    if (!row) return null;
+    if (row.contractId !== null) {
+      // Surface as not-found to keep the supplier-default surface from
+      // leaking contract-scoped rows.
+      return null;
+    }
+    return row;
+  }
+
+  async listContractRestrictions(
+    contractId: string,
+    tenantId: string,
+    opts: { seasonId?: string; includeSuperseded?: boolean } = {},
+  ): Promise<ReadonlyArray<RestrictionAdminRow>> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.restrictionRepo.listForContract(contractId, opts);
+  }
+
+  async listSupplierRestrictions(args: {
+    tenantId: string;
+    supplierId: string;
+    canonicalHotelId: string;
+    includeSuperseded?: boolean;
+  }): Promise<ReadonlyArray<RestrictionAdminRow>> {
+    return this.restrictionRepo.listSupplierDefault(args);
   }
 
   // ---- private helpers -----------------------------------------------------

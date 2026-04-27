@@ -1393,6 +1393,497 @@ describeIntegration(
     });
 
     // -----------------------------------------------------------------------
+    // Slice B2 · contract-scoped restrictions
+    // -----------------------------------------------------------------------
+
+    describe('contract restrictions · CRUD + supersede', () => {
+      let rxContractId: string;
+      let rxOtherContractId: string;
+      let rxSeasonId: string;
+      let rxOtherSeasonId: string;
+      let rxRoomTypeId: string;
+      let rxRatePlanId: string;
+      let rxStopSellId: string;
+
+      beforeAll(async () => {
+        const slug = `rx-${randomBytes(4).toString('hex')}`;
+
+        // Two contracts so we can prove the season-from-another-contract guard.
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `RX-${slug}`,
+          currency: 'EUR',
+        });
+        rxContractId = ((await cRes.json()) as AnyJson).id as string;
+
+        const cOtherRes = await post(
+          '/internal/admin/direct-contracts/contracts',
+          {
+            tenantId,
+            canonicalHotelId: hotelId,
+            supplierId,
+            contractCode: `RX2-${slug}`,
+            currency: 'EUR',
+          },
+        );
+        rxOtherContractId = ((await cOtherRes.json()) as AnyJson).id as string;
+
+        const sRes = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/seasons`,
+          { tenantId, name: 'RX Summer', dateFrom: '2026-06-01', dateTo: '2026-08-31' },
+        );
+        rxSeasonId = ((await sRes.json()) as AnyJson).id as string;
+
+        const sOtherRes = await post(
+          `/internal/admin/direct-contracts/contracts/${rxOtherContractId}/seasons`,
+          { tenantId, name: 'RX Other', dateFrom: '2026-09-01', dateTo: '2026-10-31' },
+        );
+        rxOtherSeasonId = ((await sOtherRes.json()) as AnyJson).id as string;
+
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}?tenantId=${tenantId}`,
+          { status: 'ACTIVE' },
+        );
+
+        rxRoomTypeId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_room_type (id, canonical_hotel_id, code, name)
+           VALUES ($1, $2, $3, $4)`,
+          [rxRoomTypeId, hotelId, `DBL-${slug}`, 'Double'],
+        );
+        rxRatePlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
+           VALUES ($1, $2, $3, $4, 'PUBLIC_BAR')`,
+          [rxRatePlanId, hotelId, `RP-${slug}`, 'Rate Plan'],
+        );
+      }, 30_000);
+
+      it('creates a STOP_SELL restriction with empty params', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            seasonId: rxSeasonId,
+            ratePlanId: rxRatePlanId,
+            stayDate: '2026-07-15',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        rxStopSellId = body.id as string;
+        expect(body.contractId).toBe(rxContractId);
+        expect(body.restrictionKind).toBe('STOP_SELL');
+        expect(body.supersededById).toBeNull();
+      });
+
+      it('rejects STOP_SELL with non-empty params', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-16',
+            restrictionKind: 'STOP_SELL',
+            params: { extra: 1 },
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('creates a MIN_LOS restriction with the right params', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-17',
+            restrictionKind: 'MIN_LOS',
+            params: { min_los: 3 },
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+      });
+
+      it('rejects MIN_LOS with the wrong key in params', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-18',
+            restrictionKind: 'MIN_LOS',
+            params: { los: 3 },
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects RELEASE_HOURS on a contract-scoped restriction', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-19',
+            restrictionKind: 'RELEASE_HOURS',
+            params: { hours: 24 },
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects CUTOFF_HOURS on a contract-scoped restriction', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-20',
+            restrictionKind: 'CUTOFF_HOURS',
+            params: { hours: 12 },
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects a season from a different contract (composite FK)', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            seasonId: rxOtherSeasonId,
+            stayDate: '2026-07-21',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(409);
+      });
+
+      it('rejects a body whose supplierId differs from the contract', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId: aggregatorSupplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-22',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('blocks restriction creation on an INACTIVE contract', async () => {
+        const slug2 = `rx-inactive-${randomBytes(4).toString('hex')}`;
+        const cRes = await post(
+          '/internal/admin/direct-contracts/contracts',
+          {
+            tenantId,
+            canonicalHotelId: hotelId,
+            supplierId,
+            contractCode: `INK-${slug2}`,
+            currency: 'EUR',
+          },
+        );
+        const inactiveId = ((await cRes.json()) as AnyJson).id as string;
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}?tenantId=${tenantId}`,
+          { status: 'INACTIVE' },
+        );
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-23',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('lists restrictions for a contract (active by default)', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as AnyJson;
+        expect(body.count).toBeGreaterThanOrEqual(2); // STOP_SELL + MIN_LOS
+        for (const r of body.items as AnyJson[]) {
+          expect(r.contractId).toBe(rxContractId);
+          expect(r.supersededById).toBeNull();
+        }
+      });
+
+      it('gets a single restriction by id', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions/${rxStopSellId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as AnyJson;
+        expect(body.id).toBe(rxStopSellId);
+        expect(body.restrictionKind).toBe('STOP_SELL');
+      });
+
+      it('does not expose a PATCH route', async () => {
+        const res = await patch(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions/${rxStopSellId}?tenantId=${tenantId}`,
+          { params: { other: 1 } },
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('does not expose a DELETE route', async () => {
+        const res = await del(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions/${rxStopSellId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('supersedes a restriction with a new row, marks old as superseded, writes paired audit', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions/${rxStopSellId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            seasonId: rxSeasonId,
+            ratePlanId: rxRatePlanId,
+            stayDate: '2026-07-15',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-05-01T00:00:00Z',
+            effectiveTo: '2026-12-31T23:59:59Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const newBody = (await res.json()) as AnyJson;
+        expect(newBody.id).not.toBe(rxStopSellId);
+        expect(newBody.supersededById).toBeNull();
+
+        // Old row carries the supersede link now.
+        const { rows: oldRows } = await pool.query<{
+          superseded_by_id: string | null;
+        }>(
+          `SELECT superseded_by_id FROM rate_auth_restriction WHERE id = $1`,
+          [rxStopSellId],
+        );
+        expect(oldRows[0]!.superseded_by_id).toBe(newBody.id);
+
+        // Audit semantics: CREATE for new, PATCH for old, no SUPERSEDE op.
+        const { rows: newAudit } = await pool.query<{ operation: string }>(
+          `SELECT operation FROM admin_audit_log WHERE resource_id = $1 ORDER BY created_at ASC`,
+          [newBody.id],
+        );
+        expect(newAudit.map((r) => r.operation)).toContain('CREATE');
+        const { rows: oldAudit } = await pool.query<{ operation: string }>(
+          `SELECT operation FROM admin_audit_log WHERE resource_id = $1 ORDER BY created_at ASC`,
+          [rxStopSellId],
+        );
+        const ops = oldAudit.map((r) => r.operation);
+        expect(ops).toContain('CREATE');
+        expect(ops).toContain('PATCH');
+        expect(ops).not.toContain('SUPERSEDE');
+      });
+
+      it('rejects a second supersede on an already-superseded row', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions/${rxStopSellId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-15',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-06-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(409);
+      });
+
+      it('returns 404 when superseding a row that belongs to another contract', async () => {
+        const otherRes = await post(
+          `/internal/admin/direct-contracts/contracts/${rxOtherContractId}/restrictions`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-09-15',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        // Ensure rxOtherContractId is ACTIVE before the row is read.
+        // It was left DRAFT above; the restriction was inserted while
+        // still DRAFT, which is allowed (no INACTIVE block on DRAFT).
+        const otherId = ((await otherRes.json()) as AnyJson).id as string;
+        const supersedeRes = await post(
+          `/internal/admin/direct-contracts/contracts/${rxContractId}/restrictions/${otherId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-30',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(supersedeRes.status).toBe(404);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Slice B2 · supplier-default restrictions
+    // -----------------------------------------------------------------------
+
+    describe('supplier-default restrictions · CRUD + supersede', () => {
+      let supRestrictionId: string;
+
+      it('creates a supplier-default restriction with no contract', async () => {
+        const res = await post(
+          '/internal/admin/direct-contracts/supplier-restrictions',
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-25',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        supRestrictionId = body.id as string;
+        expect(body.contractId).toBeNull();
+        expect(body.seasonId).toBeNull();
+      });
+
+      it('allows RELEASE_HOURS on the supplier-default surface', async () => {
+        const res = await post(
+          '/internal/admin/direct-contracts/supplier-restrictions',
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-26',
+            restrictionKind: 'RELEASE_HOURS',
+            params: { hours: 48 },
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+      });
+
+      it('rejects an AGGREGATOR supplierId (DIRECT only on this surface)', async () => {
+        const res = await post(
+          '/internal/admin/direct-contracts/supplier-restrictions',
+          {
+            tenantId,
+            supplierId: aggregatorSupplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-27',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('lists supplier-default restrictions filtered by (tenant, supplier, hotel)', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/supplier-restrictions?tenantId=${tenantId}&supplierId=${supplierId}&canonicalHotelId=${hotelId}`,
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as AnyJson;
+        expect(body.count).toBeGreaterThanOrEqual(2);
+        for (const r of body.items as AnyJson[]) {
+          expect(r.contractId).toBeNull();
+        }
+      });
+
+      it('gets a supplier-default restriction by id', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/supplier-restrictions/${supRestrictionId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).id).toBe(supRestrictionId);
+      });
+
+      it('returns 404 when a supplier-default GET targets a contract-scoped row', async () => {
+        // Pull any contract-scoped row id from the prior describe block's
+        // restrictions for the same tenant.
+        const { rows } = await pool.query<{ id: string }>(
+          `SELECT id FROM rate_auth_restriction
+            WHERE tenant_id = $1 AND contract_id IS NOT NULL
+            ORDER BY created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        const contractScopedId = rows[0]?.id;
+        if (!contractScopedId) return;
+        const res = await get(
+          `/internal/admin/direct-contracts/supplier-restrictions/${contractScopedId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('supersedes a supplier-default restriction', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/supplier-restrictions/${supRestrictionId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            stayDate: '2026-07-25',
+            restrictionKind: 'STOP_SELL',
+            params: {},
+            effectiveFrom: '2026-05-15T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const newBody = (await res.json()) as AnyJson;
+        expect(newBody.id).not.toBe(supRestrictionId);
+
+        const { rows } = await pool.query<{ superseded_by_id: string | null }>(
+          `SELECT superseded_by_id FROM rate_auth_restriction WHERE id = $1`,
+          [supRestrictionId],
+        );
+        expect(rows[0]!.superseded_by_id).toBe(newBody.id);
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // HTTP helpers
     // -----------------------------------------------------------------------
 

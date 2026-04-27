@@ -5,6 +5,7 @@ export {
   asObject,
   optionalString,
   optionalUlid,
+  optionalIsoTimestamp,
   rejectExtraKeys,
   requireString,
   requireUlid,
@@ -13,6 +14,7 @@ export {
   optionalEnum,
   requireInt,
   optionalInt,
+  requireIsoTimestamp,
   ENUM_STATUS,
 } from '../admin/validation';
 
@@ -65,4 +67,124 @@ export function requireCurrency(
     );
   }
   return v;
+}
+
+// ---------------------------------------------------------------------------
+// Restriction (ADR-023) — kind enum + per-kind params validators
+// ---------------------------------------------------------------------------
+
+export const RESTRICTION_KINDS = [
+  'STOP_SELL',
+  'CTA',
+  'CTD',
+  'MIN_LOS',
+  'MAX_LOS',
+  'ADVANCE_PURCHASE_MIN',
+  'ADVANCE_PURCHASE_MAX',
+  'RELEASE_HOURS',
+  'CUTOFF_HOURS',
+] as const;
+
+export type RestrictionKind = (typeof RESTRICTION_KINDS)[number];
+
+export const ENUM_RESTRICTION_KIND: ReadonlySet<RestrictionKind> =
+  new Set<RestrictionKind>(RESTRICTION_KINDS);
+
+/**
+ * Kinds that may NOT be authored on a contract-scoped restriction in
+ * Phase B. RELEASE_HOURS / CUTOFF_HOURS are channel-manager push
+ * concepts (ADR-023 D3) and there is no real channel-manager use
+ * case yet. Supplier-default writes accept them so the model stays
+ * unified for the day a channel-manager adapter ships.
+ */
+export const RESTRICTION_KINDS_FORBIDDEN_FOR_CONTRACT_SCOPED: ReadonlySet<RestrictionKind> =
+  new Set<RestrictionKind>(['RELEASE_HOURS', 'CUTOFF_HOURS']);
+
+/**
+ * Read `body.params` and require it be a JSON object (or absent →
+ * empty object). Returns the raw params for downstream per-kind
+ * structural validation.
+ */
+export function requireParamsObject(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const v = body['params'];
+  if (v === undefined || v === null) return {};
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    throw new BadRequestException('params must be a JSON object');
+  }
+  return v as Record<string, unknown>;
+}
+
+/**
+ * Service-layer params shape validation for ADR-023 D3. The DB only
+ * CHECKs the `restriction_kind` enum value; everything below is the
+ * application's responsibility.
+ *
+ * - STOP_SELL / CTA / CTD: params must be `{}`.
+ * - MIN_LOS:                 `{ min_los: <int >= 1> }`.
+ * - MAX_LOS:                 `{ max_los: <int >= 1> }`.
+ * - ADVANCE_PURCHASE_MIN/MAX: `{ days: <int >= 0> }`.
+ * - RELEASE_HOURS / CUTOFF_HOURS: `{ hours: <int >= 0> }`.
+ */
+export function validateRestrictionParams(
+  kind: RestrictionKind,
+  params: Record<string, unknown>,
+): void {
+  switch (kind) {
+    case 'STOP_SELL':
+    case 'CTA':
+    case 'CTD':
+      assertEmptyParams(kind, params);
+      return;
+    case 'MIN_LOS':
+      assertExactIntKey(kind, params, 'min_los', { min: 1 });
+      return;
+    case 'MAX_LOS':
+      assertExactIntKey(kind, params, 'max_los', { min: 1 });
+      return;
+    case 'ADVANCE_PURCHASE_MIN':
+    case 'ADVANCE_PURCHASE_MAX':
+      assertExactIntKey(kind, params, 'days', { min: 0 });
+      return;
+    case 'RELEASE_HOURS':
+    case 'CUTOFF_HOURS':
+      assertExactIntKey(kind, params, 'hours', { min: 0 });
+      return;
+  }
+}
+
+function assertEmptyParams(
+  kind: RestrictionKind,
+  params: Record<string, unknown>,
+): void {
+  if (Object.keys(params).length > 0) {
+    throw new BadRequestException(
+      `params must be an empty object for restriction kind ${kind}`,
+    );
+  }
+}
+
+function assertExactIntKey(
+  kind: RestrictionKind,
+  params: Record<string, unknown>,
+  key: string,
+  opts: { min?: number; max?: number } = {},
+): void {
+  const keys = Object.keys(params);
+  if (keys.length !== 1 || keys[0] !== key) {
+    throw new BadRequestException(
+      `params for restriction kind ${kind} must contain exactly the key "${key}"`,
+    );
+  }
+  const v = params[key];
+  if (typeof v !== 'number' || !Number.isInteger(v)) {
+    throw new BadRequestException(`params.${key} must be an integer`);
+  }
+  if (opts.min !== undefined && v < opts.min) {
+    throw new BadRequestException(`params.${key} must be ≥ ${opts.min}`);
+  }
+  if (opts.max !== undefined && v > opts.max) {
+    throw new BadRequestException(`params.${key} must be ≤ ${opts.max}`);
+  }
 }
