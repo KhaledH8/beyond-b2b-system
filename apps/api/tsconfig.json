@@ -23,6 +23,9 @@
       "@bb/pricing": [
         "../../packages/pricing/dist"
       ],
+      "@bb/fx": [
+        "../../packages/fx/dist"
+      ],
       "@bb/adapter-hotelbeds": [
         "../../packages/adapters/hotelbeds/dist"
       ],
@@ -46,6 +49,9 @@
     },
     {
       "path": "../../packages/pricing"
+    },
+    {
+      "path": "../../packages/fx"
     },
     {
       "path": "../../packages/adapters/hotelbeds"

@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Pool } from '@bb/db';
+import type { FxSnapshot } from '@bb/fx';
 import { PG_POOL } from '../database/database.module';
 
 export interface FxRateSnapshotInput {
@@ -9,6 +10,28 @@ export interface FxRateSnapshotInput {
   readonly quoteCurrency: string;
   readonly rate: string;
   readonly observedAt: string;
+}
+
+interface FxRateSnapshotRow {
+  readonly provider: string;
+  readonly base_currency: string;
+  readonly quote_currency: string;
+  readonly rate: string;
+  readonly observed_at: Date | string;
+}
+
+function rowToSnapshot(row: FxRateSnapshotRow): FxSnapshot {
+  const observedAt =
+    row.observed_at instanceof Date
+      ? row.observed_at.toISOString()
+      : new Date(row.observed_at).toISOString();
+  return {
+    provider: row.provider,
+    baseCurrency: row.base_currency,
+    quoteCurrency: row.quote_currency,
+    rate: row.rate,
+    observedAt,
+  };
 }
 
 @Injectable()
@@ -53,5 +76,36 @@ export class FxRateSnapshotRepository {
 
     const { rows } = await this.pool.query<{ id: string }>(sql, values);
     return { inserted: rows.length };
+  }
+
+  /**
+   * Returns every snapshot for `provider` whose `observed_at` is no
+   * older than `freshnessTtlMinutes` measured back from `asOf`. Rows are
+   * mapped to the pure `FxSnapshot` shape consumed by `@bb/fx` so the
+   * caller can hand the array straight to `applyFx`.
+   *
+   * The result is intentionally provider-scoped: the cross-rate path in
+   * `applyFx` only mixes snapshots from one feed at a time, never a
+   * cocktail of OXR + ECB rows.
+   */
+  async findFreshSnapshots(
+    provider: string,
+    asOf: Date,
+    freshnessTtlMinutes: number,
+  ): Promise<FxSnapshot[]> {
+    const cutoff = new Date(
+      asOf.getTime() - freshnessTtlMinutes * 60_000,
+    ).toISOString();
+    const sql = `
+      SELECT provider, base_currency, quote_currency, rate, observed_at
+      FROM fx_rate_snapshot
+      WHERE provider = $1 AND observed_at >= $2::timestamptz
+      ORDER BY observed_at DESC
+    `;
+    const { rows } = await this.pool.query<FxRateSnapshotRow>(sql, [
+      provider,
+      cutoff,
+    ]);
+    return rows.map(rowToSnapshot);
   }
 }

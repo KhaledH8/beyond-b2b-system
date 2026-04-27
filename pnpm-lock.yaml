@@ -96,6 +96,9 @@ importers:
       '@bb/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@bb/fx':
+        specifier: workspace:*
+        version: link:../../packages/fx
       '@bb/pricing':
         specifier: workspace:*
         version: link:../../packages/pricing
