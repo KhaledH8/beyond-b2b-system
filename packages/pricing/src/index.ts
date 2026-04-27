@@ -14,6 +14,14 @@ export type {
   AuthoredNightLine,
   PriceableAuthoredOffer,
 } from './authored-composer';
+export { evaluateRestrictions } from './restriction-evaluator';
+export type {
+  EvaluateRestrictionsInput,
+  RestrictionEvaluationResult,
+  RestrictionFailureReason,
+  RestrictionKind,
+  RestrictionSnapshot,
+} from './restriction-evaluator';
 export {
   applyPercentMarkup,
   fromMinorUnits,

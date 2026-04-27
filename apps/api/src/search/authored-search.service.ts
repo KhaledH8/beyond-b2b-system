@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   AUTHORED_OFFER_SHAPE,
   evaluateAuthoredOffer,
+  evaluateRestrictions,
   toMinorUnits,
   type AuthoredNightLine,
   type PriceableAuthoredOffer,
@@ -31,7 +32,7 @@ import {
  * one `SearchResultRate` per matching (contract, base rate) tuple
  * along with the supplier identifiers the merge layer needs.
  *
- * Slice 5 scope:
+ * Slice scope:
  *   - Single-season stays only. A stay that does not fit entirely
  *     within one season produces no offer for that contract — the
  *     multi-season stitch is deferred until a real paper contract
@@ -40,9 +41,11 @@ import {
  *     does not carry a target meal plan; meal upgrades land when the
  *     request shape extends to choose one. Meal supplement rows are
  *     therefore not loaded in this slice.
- *   - Restrictions and cancellation policies (ADR-023, Phase B) are
- *     not consulted; every assembled offer is treated as bookable
- *     unless the underlying capacity check rejects it.
+ *   - Restrictions (ADR-023 Phase B Slice B5): consulted via the
+ *     pure `evaluateRestrictions`. Offers whose `(contract, season,
+ *     rate_plan, room_type, stay)` scope matches a blocking row are
+ *     dropped from the candidate set BEFORE pricing per ADR-023 D6.
+ *     Cancellation policy resolution (Slice B6) is still deferred.
  *
  * Provenance + shape labelling (ADR-021): every emitted
  * `SearchResultRate` carries `offerShape = AUTHORED_PRIMITIVES`,
@@ -86,6 +89,12 @@ export class AuthoredSearchService {
     readonly childAges: ReadonlyArray<number>;
     readonly rules: ReadonlyArray<MarkupRuleSnapshot>;
     readonly ctx: AccountContext;
+    /**
+     * Single request-time clock value. Used both as the `effective`
+     * filter bound when loading restrictions and as the `now`
+     * argument to `evaluateRestrictions` so the two views agree.
+     */
+    readonly now: Date;
   }): Promise<ReadonlyArray<PricedAuthoredEntry>> {
     if (args.canonicalLookups.length === 0) return [];
 
@@ -124,9 +133,22 @@ export class AuthoredSearchService {
     if (usableContractIds.length === 0) return [];
 
     const seasonIds = Array.from(seasonByContract.values()).map((s) => s.id);
-    const [baseRates, occupancySupplements] = await Promise.all([
+    const [baseRates, occupancySupplements, restrictions] = await Promise.all([
       this.repo.findBaseRates(usableContractIds, seasonIds),
       this.repo.findOccupancySupplements(usableContractIds, seasonIds),
+      this.repo.findActiveRestrictions({
+        tenantId: args.tenantId,
+        supplierIds: uniq(
+          contracts
+            .filter((c) => seasonByContract.has(c.contractId))
+            .map((c) => c.supplierId),
+        ),
+        canonicalHotelIds: canonicalIds,
+        contractIds: usableContractIds,
+        checkIn: args.checkIn,
+        checkOut: args.checkOut,
+        now: args.now,
+      }),
     ]);
 
     const supplementsByContractSeason = indexBy(
@@ -162,6 +184,21 @@ export class AuthoredSearchService {
       );
       for (const br of contractBaseRates) {
         if (!fitsCapacity(br, args.adults, args.children)) continue;
+
+        // ADR-023 D6: restrictions evaluate BEFORE the pricing chain.
+        // Offers that come back unavailable are dropped from the
+        // candidate set (preferred behavior per Slice B5 brief).
+        const availability = evaluateRestrictions({
+          stay: { checkIn: args.checkIn, checkOut: args.checkOut },
+          now: args.now,
+          contractId: contract.contractId,
+          seasonId: season.id,
+          ratePlanId: br.ratePlanId,
+          roomTypeId: br.roomTypeId,
+          restrictions,
+        });
+        if (!availability.available) continue;
+
         const occSupplements = supplementsByContractSeason.get(
           `${contract.contractId}::${season.id}::${br.roomTypeId}::${br.ratePlanId}`,
         ) ?? [];

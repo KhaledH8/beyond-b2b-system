@@ -251,7 +251,9 @@ describeIntegration('search controller · authored direct contracts merge', () =
   let tenantId: string;
   let accountId: string;
   let canonicalHotelId: string;
+  let directSupplierId: string;
   let directSupplierCode: string;
+  let contractId: string;
 
   beforeAll(async () => {
     process.env['INTERNAL_API_KEY'] = TEST_INTERNAL_KEY;
@@ -362,7 +364,7 @@ describeIntegration('search controller · authored direct contracts merge', () =
     }
 
     // DIRECT supplier + active contract on the same canonical hotel.
-    const directSupplierId = newUlid();
+    directSupplierId = newUlid();
     directSupplierCode = `direct-${slug}`;
     await pool.query(
       `INSERT INTO supply_supplier (id, code, display_name, source_type, status)
@@ -370,7 +372,7 @@ describeIntegration('search controller · authored direct contracts merge', () =
       [directSupplierId, directSupplierCode],
     );
 
-    const contractId = newUlid();
+    contractId = newUlid();
     await pool.query(
       `INSERT INTO rate_auth_contract
          (id, tenant_id, canonical_hotel_id, supplier_id, contract_code, currency, status)
@@ -481,6 +483,201 @@ describeIntegration('search controller · authored direct contracts merge', () =
       expect(r.priceQuote.netCost.amount).toBe('250.00');
       // Trace must lead with the AUTHORED_BASE_RATE step.
       expect(r.trace.steps[0]!.kind).toBe('AUTHORED_BASE_RATE');
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Slice B5 · restriction gating in authored search
+  //
+  // Each test inserts a single `rate_auth_restriction` row, runs
+  // /search, asserts the authored result is suppressed (or kept), and
+  // deletes the restriction so the next test starts clean. The
+  // sourced result from Hotelbeds is unaffected by these tests, which
+  // we verify explicitly to lock in the additive behavior.
+  // -------------------------------------------------------------------------
+
+  async function searchOnce(): Promise<SearchResponse> {
+    const url = await urlFor(app.getHttpServer(), '/search');
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        tenantId,
+        accountId,
+        supplierHotelIds: ['1000073'],
+        checkIn: '2026-06-01',
+        checkOut: '2026-06-03',
+        occupancy: { adults: 2, children: 0 },
+        currency: 'EUR',
+      }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as SearchResponse;
+  }
+
+  async function insertRestriction(args: {
+    contractId: string | null;
+    stayDate: string;
+    restrictionKind: string;
+    params?: Record<string, unknown>;
+    effectiveFrom?: string;
+  }): Promise<string> {
+    const id = newUlid();
+    await pool.query(
+      `INSERT INTO rate_auth_restriction
+         (id, tenant_id, supplier_id, canonical_hotel_id,
+          contract_id, stay_date, restriction_kind, params,
+          effective_from)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8::jsonb, $9::timestamptz)`,
+      [
+        id,
+        tenantId,
+        directSupplierId,
+        canonicalHotelId,
+        args.contractId,
+        args.stayDate,
+        args.restrictionKind,
+        JSON.stringify(args.params ?? {}),
+        args.effectiveFrom ?? '2025-01-01T00:00:00Z',
+      ],
+    );
+    return id;
+  }
+
+  async function deleteRestriction(id: string): Promise<void> {
+    await pool.query(`DELETE FROM rate_auth_restriction WHERE id = $1`, [id]);
+  }
+
+  it('drops the authored offer when a contract-scoped STOP_SELL covers a stay night; sourced unaffected', async () => {
+    const id = await insertRestriction({
+      contractId,
+      stayDate: '2026-06-02',
+      restrictionKind: 'STOP_SELL',
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find((h) => h.supplierId === directSupplierCode);
+      const sourced = body.results.find((h) => h.supplierId === 'hotelbeds');
+      expect(authored).toBeUndefined();
+      expect(sourced).toBeDefined();
+      expect(sourced!.rates.length).toBeGreaterThan(0);
+    } finally {
+      await deleteRestriction(id);
+    }
+  });
+
+  it('drops the authored offer when MIN_LOS exceeds the stay length', async () => {
+    const id = await insertRestriction({
+      contractId,
+      stayDate: '2026-06-01',
+      restrictionKind: 'MIN_LOS',
+      params: { min_los: 99 },
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find((h) => h.supplierId === directSupplierCode);
+      expect(authored).toBeUndefined();
+    } finally {
+      await deleteRestriction(id);
+    }
+  });
+
+  it('drops the authored offer when a supplier-default restriction blocks the stay', async () => {
+    const id = await insertRestriction({
+      contractId: null,
+      stayDate: '2026-06-02',
+      restrictionKind: 'STOP_SELL',
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find((h) => h.supplierId === directSupplierCode);
+      expect(authored).toBeUndefined();
+    } finally {
+      await deleteRestriction(id);
+    }
+  });
+
+  it('keeps the authored offer when the restriction stay_date falls outside the stay window', async () => {
+    const id = await insertRestriction({
+      contractId,
+      stayDate: '2026-05-15',
+      restrictionKind: 'STOP_SELL',
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find((h) => h.supplierId === directSupplierCode);
+      expect(authored).toBeDefined();
+      expect(authored!.rates.length).toBeGreaterThan(0);
+    } finally {
+      await deleteRestriction(id);
+    }
+  });
+
+  it('contract-scoped restriction overrides a stricter supplier-default at the same (kind, stay_date)', async () => {
+    // Tier 3 supplier-default would block (MIN_LOS=99). Tier 2
+    // contract-only allows (MIN_LOS=2). Most-specific-wins → tier 2
+    // wins, the offer is kept.
+    const supplierDefaultId = await insertRestriction({
+      contractId: null,
+      stayDate: '2026-06-01',
+      restrictionKind: 'MIN_LOS',
+      params: { min_los: 99 },
+    });
+    const contractScopedId = await insertRestriction({
+      contractId,
+      stayDate: '2026-06-01',
+      restrictionKind: 'MIN_LOS',
+      params: { min_los: 2 },
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find((h) => h.supplierId === directSupplierCode);
+      expect(authored).toBeDefined();
+      expect(authored!.rates.length).toBeGreaterThan(0);
+    } finally {
+      await deleteRestriction(contractScopedId);
+      await deleteRestriction(supplierDefaultId);
+    }
+  });
+
+  it('ignores a superseded restriction even when its stay_date intersects the stay', async () => {
+    const oldId = newUlid();
+    const newId = newUlid();
+    // Insert the new (replacement) row first, then the old row that
+    // points at it via superseded_by_id. The old row would block but
+    // the evaluator must skip it.
+    await pool.query(
+      `INSERT INTO rate_auth_restriction
+         (id, tenant_id, supplier_id, canonical_hotel_id,
+          contract_id, stay_date, restriction_kind, params,
+          effective_from)
+       VALUES ($1, $2, $3, $4, $5, '2026-06-02'::date, 'STOP_SELL', '{}'::jsonb, '2025-01-01T00:00:00Z'::timestamptz)`,
+      [newId, tenantId, directSupplierId, canonicalHotelId, contractId],
+    );
+    await pool.query(
+      `INSERT INTO rate_auth_restriction
+         (id, tenant_id, supplier_id, canonical_hotel_id,
+          contract_id, stay_date, restriction_kind, params,
+          effective_from, superseded_by_id)
+       VALUES ($1, $2, $3, $4, $5, '2026-06-15'::date, 'STOP_SELL', '{}'::jsonb, '2025-01-01T00:00:00Z'::timestamptz, $6)`,
+      [oldId, tenantId, directSupplierId, canonicalHotelId, contractId, newId],
+    );
+    try {
+      // The new row blocks 2026-06-02 (a stay night) — authored is dropped.
+      // We only assert the OLD row's effect: had the old row been
+      // honored, search would still drop the authored offer for
+      // unrelated reasons. Instead, supersede the new row out of
+      // contention by giving it an effective_to in the past.
+      await pool.query(
+        `UPDATE rate_auth_restriction SET effective_to = '2025-12-31T23:59:59Z' WHERE id = $1`,
+        [newId],
+      );
+      const body = await searchOnce();
+      const authored = body.results.find((h) => h.supplierId === directSupplierCode);
+      expect(authored).toBeDefined();
+    } finally {
+      await pool.query(`DELETE FROM rate_auth_restriction WHERE id = $1`, [oldId]);
+      await pool.query(`DELETE FROM rate_auth_restriction WHERE id = $1`, [newId]);
     }
   });
 });

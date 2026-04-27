@@ -82,6 +82,13 @@ export class SearchService {
   ) {}
 
   async search(req: SearchRequest): Promise<SearchResponse> {
+    // Single request-time clock value used by every now-sensitive
+    // step downstream (today: restriction loading + restriction
+    // evaluation in the authored fan-out). Capturing once at the
+    // entry point guarantees the SQL filter and the in-memory
+    // evaluator agree on "now" for this request.
+    const now = new Date();
+
     const account = await this.accounts.resolveActive(req.accountId);
     if (account.tenantId !== req.tenantId) {
       // Cross-tenant guard: an account never participates in a
@@ -219,6 +226,7 @@ export class SearchService {
           childAges: req.occupancy.childAges ?? [],
           rules,
           ctx,
+          now,
         })
       : ([] as ReadonlyArray<PricedAuthoredEntry>);
     const authoredEntries: PricedEntry[] = authoredPriced.map(toPricedEntry);

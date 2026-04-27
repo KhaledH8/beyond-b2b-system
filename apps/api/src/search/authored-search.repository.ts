@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Pool } from '@bb/db';
+import type { RestrictionKind, RestrictionSnapshot } from '@bb/pricing';
 import { PG_POOL } from '../database/database.module';
 
 /**
@@ -353,6 +354,90 @@ export class PgAuthoredSearchRepository {
       contractId: r.contract_id,
       ageMin: r.age_min,
       ageMax: r.age_max,
+    }));
+  }
+
+  /**
+   * Active restrictions for the request's authored scope (ADR-023).
+   *
+   * Pulls both supplier-default rows (`contract_id IS NULL`) and
+   * rows tied to any of the request's active contracts. The
+   * `effective_from` / `effective_to` filter and the
+   * `superseded_by_id IS NULL` filter share the same `now` value the
+   * caller passes to the evaluator, so the loaded set is exactly the
+   * "active right now" view of the table.
+   *
+   * `stay_date BETWEEN checkIn AND checkOut` covers every date the
+   * evaluator will consult — stay nights for STOP_SELL, the check-in
+   * date for CTA / LOS / advance-purchase / cutoff, and the actual
+   * checkout date for CTD. The evaluator does the per-`(kind,
+   * stay_date)` precedence picking; this query just delivers the
+   * candidate set.
+   */
+  async findActiveRestrictions(args: {
+    readonly tenantId: string;
+    readonly supplierIds: ReadonlyArray<string>;
+    readonly canonicalHotelIds: ReadonlyArray<string>;
+    readonly contractIds: ReadonlyArray<string>;
+    readonly checkIn: string;
+    readonly checkOut: string;
+    readonly now: Date;
+  }): Promise<ReadonlyArray<RestrictionSnapshot>> {
+    if (
+      args.supplierIds.length === 0 ||
+      args.canonicalHotelIds.length === 0
+    ) {
+      return [];
+    }
+    const { rows } = await this.pool.query<{
+      id: string;
+      contract_id: string | null;
+      season_id: string | null;
+      rate_plan_id: string | null;
+      room_type_id: string | null;
+      stay_date: string;
+      restriction_kind: string;
+      params: Record<string, unknown>;
+      effective_from: Date;
+      effective_to: Date | null;
+      superseded_by_id: string | null;
+    }>(
+      `
+      SELECT id, contract_id, season_id, rate_plan_id, room_type_id,
+             stay_date, restriction_kind, params,
+             effective_from, effective_to, superseded_by_id
+        FROM rate_auth_restriction
+       WHERE tenant_id = $1
+         AND supplier_id = ANY($2::char(26)[])
+         AND canonical_hotel_id = ANY($3::char(26)[])
+         AND stay_date BETWEEN $4::date AND $5::date
+         AND superseded_by_id IS NULL
+         AND effective_from <= $6::timestamptz
+         AND (effective_to IS NULL OR effective_to >= $6::timestamptz)
+         AND (contract_id IS NULL OR contract_id = ANY($7::char(26)[]))
+      `,
+      [
+        args.tenantId,
+        args.supplierIds as readonly string[],
+        args.canonicalHotelIds as readonly string[],
+        args.checkIn,
+        args.checkOut,
+        args.now,
+        args.contractIds as readonly string[],
+      ],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      contractId: r.contract_id,
+      seasonId: r.season_id,
+      ratePlanId: r.rate_plan_id,
+      roomTypeId: r.room_type_id,
+      stayDate: r.stay_date,
+      restrictionKind: r.restriction_kind as RestrictionKind,
+      params: r.params,
+      effectiveFrom: r.effective_from.toISOString(),
+      effectiveTo: r.effective_to ? r.effective_to.toISOString() : null,
+      supersededById: r.superseded_by_id,
     }));
   }
 
