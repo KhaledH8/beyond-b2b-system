@@ -12,7 +12,10 @@ export type PricingTraceStepKind =
   | 'MARKUP_APPLIED'
   | 'TAX_AND_FEES'
   | 'PROMOTION_APPLIED'
-  | 'COLLECTION_AND_SETTLEMENT_BIND';
+  | 'COLLECTION_AND_SETTLEMENT_BIND'
+  | 'AUTHORED_BASE_RATE'
+  | 'AUTHORED_OCCUPANCY_SUPPLEMENT'
+  | 'AUTHORED_MEAL_SUPPLEMENT';
 
 export interface PricingTraceStep {
   readonly kind: PricingTraceStepKind;
