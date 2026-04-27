@@ -254,6 +254,11 @@ describeIntegration('search controller · authored direct contracts merge', () =
   let directSupplierId: string;
   let directSupplierCode: string;
   let contractId: string;
+  // Promoted to outer scope so B7 mixed-currency tests can seed
+  // a second base rate referencing the same season/rate-plan/meal-plan.
+  let seasonId: string;
+  let ratePlanId: string;
+  let mealPlanId: string;
 
   beforeAll(async () => {
     process.env['INTERNAL_API_KEY'] = TEST_INTERNAL_KEY;
@@ -380,7 +385,7 @@ describeIntegration('search controller · authored direct contracts merge', () =
       [contractId, tenantId, canonicalHotelId, directSupplierId, `CTR-${slug}`],
     );
 
-    const seasonId = newUlid();
+    seasonId = newUlid();
     await pool.query(
       `INSERT INTO rate_auth_season (id, contract_id, name, date_from, date_to)
        VALUES ($1, $2, 'Summer', '2026-05-01', '2026-09-30')`,
@@ -393,13 +398,13 @@ describeIntegration('search controller · authored direct contracts merge', () =
        VALUES ($1, $2, $3, $4)`,
       [roomTypeId, canonicalHotelId, `DBL-${slug}`, 'Authored Double'],
     );
-    const ratePlanId = newUlid();
+    ratePlanId = newUlid();
     await pool.query(
       `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
        VALUES ($1, $2, $3, $4, 'NEGOTIATED')`,
       [ratePlanId, canonicalHotelId, `NEG-${slug}`, 'Negotiated Rate'],
     );
-    const mealPlanId = newUlid();
+    mealPlanId = newUlid();
     await pool.query(
       `INSERT INTO hotel_meal_plan (id, canonical_hotel_id, code, name)
        VALUES ($1, $2, $3, 'Room Only')`,
@@ -877,6 +882,93 @@ describeIntegration('search controller · authored direct contracts merge', () =
       await pool.query(
         `DELETE FROM rate_auth_cancellation_policy WHERE id = $1`,
         [newId],
+      );
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Slice B7 · mixed-currency hardening
+  //
+  // Verifies that meta.currencies is populated and that the sort
+  // comparator is deterministic when multiple selling-price currencies
+  // appear in one response. No FX conversion is performed; rates with
+  // different currencies sort alphabetically by currency code.
+  // -------------------------------------------------------------------------
+
+  it('meta.currencies is a sorted array of all observed selling-price currencies (single-currency baseline)', async () => {
+    const body = await searchOnce();
+    // Hotelbeds fixture returns EUR (request specifies currency=EUR) and
+    // the authored base rate is also seeded in EUR. Expect exactly one.
+    expect(body.meta.currencies).toEqual(['EUR']);
+  });
+
+  it('meta.currencies lists all currencies and rates sort alphabetically by currency when currencies differ', async () => {
+    // Seed a second authored base rate in AED for the same contract,
+    // using a fresh room-type + occupancy-template pair so the insert
+    // does not violate any unique constraint on (contract, season, room_type, rate_plan).
+    const aedRoomTypeId = newUlid();
+    await pool.query(
+      `INSERT INTO hotel_room_type (id, canonical_hotel_id, code, name)
+       VALUES ($1, $2, $3, 'AED Room Type')`,
+      [aedRoomTypeId, canonicalHotelId, `AED-RT-${aedRoomTypeId.slice(-6)}`],
+    );
+    const aedOccTemplateId = newUlid();
+    await pool.query(
+      `INSERT INTO hotel_occupancy_template
+         (id, canonical_hotel_id, room_type_id, base_adults, max_adults, max_children, max_total)
+       VALUES ($1, $2, $3, 2, 2, 0, 2)`,
+      [aedOccTemplateId, canonicalHotelId, aedRoomTypeId],
+    );
+    const aedBaseRateId = newUlid();
+    await pool.query(
+      `INSERT INTO rate_auth_base_rate
+         (id, contract_id, season_id, room_type_id, rate_plan_id,
+          occupancy_template_id, included_meal_plan_id,
+          amount_minor_units, currency)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 5000, 'AED')`,
+      [
+        aedBaseRateId,
+        contractId,
+        seasonId,
+        aedRoomTypeId,
+        ratePlanId,
+        aedOccTemplateId,
+        mealPlanId,
+      ],
+    );
+    try {
+      const body = await searchOnce();
+
+      // Both AED (authored) and EUR (sourced + original authored) are present.
+      expect(body.meta.currencies).toEqual(['AED', 'EUR']);
+
+      // Within the authored hotel, rates sort alphabetically by currency:
+      // AED < EUR, so the AED rate must appear before the EUR rate.
+      const authored = body.results.find(
+        (h) => h.supplierId === directSupplierCode,
+      );
+      expect(authored).toBeDefined();
+      const sellingCurrencies = authored!.rates.map(
+        (r) => r.priceQuote.sellingPrice.currency,
+      );
+      expect(sellingCurrencies).toContain('AED');
+      expect(sellingCurrencies).toContain('EUR');
+      expect(sellingCurrencies.indexOf('AED')).toBeLessThan(
+        sellingCurrencies.indexOf('EUR'),
+      );
+    } finally {
+      // Reverse insertion order to respect FK constraints.
+      await pool.query(
+        `DELETE FROM rate_auth_base_rate WHERE id = $1`,
+        [aedBaseRateId],
+      );
+      await pool.query(
+        `DELETE FROM hotel_occupancy_template WHERE id = $1`,
+        [aedOccTemplateId],
+      );
+      await pool.query(
+        `DELETE FROM hotel_room_type WHERE id = $1`,
+        [aedRoomTypeId],
       );
     }
   });

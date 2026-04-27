@@ -52,7 +52,10 @@ import {
  *      consulted here.
  *   7. Merge sourced + authored entries, group by
  *      `(supplierId, supplierHotelCode)`, attach promotion tags,
- *      sort by cheapest selling price.
+ *      sort by cheapest selling price. When multiple currencies are
+ *      present (e.g. sourced in EUR + authored in AED), rates sort
+ *      alphabetically by currency code first — no FX conversion is
+ *      performed. `meta.currencies` reports the full observed set.
  *
  * Pricing is the only step that mutates rate amounts. Merchandising
  * runs after and only attaches a tag — it never reorders past the
@@ -249,10 +252,13 @@ export class SearchService {
       };
     });
 
-    // Sort hotels by their cheapest selling price (ascending). When
-    // a hotel has zero priced rates (impossible today but defensive),
-    // it sorts last. Promotion tags do NOT influence this ordering.
-    results.sort((a, b) => cheapestSellMinor(a) - cheapestSellMinor(b));
+    // Sort hotels by their cheapest selling price ascending. Hotels with
+    // zero rates (impossible today but defensive) sort last. When hotels
+    // have rates in different currencies, the alphabetical-currency sort
+    // from compareSellingPriceAsc provides a deterministic ordering
+    // without requiring FX conversion.
+    // Promotion tags do NOT influence this ordering.
+    results.sort(compareHotelsByPrice);
 
     return {
       meta: {
@@ -260,6 +266,7 @@ export class SearchService {
         generatedAt: new Date().toISOString(),
         accountContext: ctx,
         currency: req.currency ?? allRates[0]?.grossAmount.currency ?? 'USD',
+        currencies: collectCurrencies(results),
         resultCount: results.length,
       },
       results,
@@ -366,7 +373,6 @@ function groupByHotel(rows: ReadonlyArray<PricedEntry>): Array<{
   supplierHotelId: string;
   canonicalHotelId: string | undefined;
   rates: SearchResultRate[];
-  cheapestSellMinor: bigint;
 }> {
   const map = new Map<
     string,
@@ -376,7 +382,6 @@ function groupByHotel(rows: ReadonlyArray<PricedEntry>): Array<{
       supplierHotelId: string;
       canonicalHotelId: string | undefined;
       rates: SearchResultRate[];
-      cheapestSellMinor: bigint;
     }
   >();
   for (const row of rows) {
@@ -389,26 +394,23 @@ function groupByHotel(rows: ReadonlyArray<PricedEntry>): Array<{
         supplierHotelId: row.supplierHotelId,
         canonicalHotelId: row.canonicalHotelId,
         rates: [row.result],
-        cheapestSellMinor: row.sellMinor,
       });
     } else {
       entry.rates.push(row.result);
-      if (row.sellMinor < entry.cheapestSellMinor) {
-        entry.cheapestSellMinor = row.sellMinor;
-      }
       if (entry.canonicalHotelId === undefined && row.canonicalHotelId !== undefined) {
         entry.canonicalHotelId = row.canonicalHotelId;
       }
     }
   }
-  // Sort each hotel's rates by selling price ascending.
+  // Sort each hotel's rates by selling price ascending. When rates span
+  // multiple currencies the alphabetical-currency tie-break in
+  // compareSellingPriceAsc makes the order deterministic.
   const out: Array<{
     supplierId: string;
     supplierHotelCode: string;
     supplierHotelId: string;
     canonicalHotelId: string | undefined;
     rates: SearchResultRate[];
-    cheapestSellMinor: bigint;
   }> = [];
   for (const value of map.values()) {
     value.rates.sort((a, b) =>
@@ -423,29 +425,41 @@ function compareSellingPriceAsc(
   a: { amount: string; currency: string },
   b: { amount: string; currency: string },
 ): number {
-  // Comparing within a single response uses a single currency in
-  // this slice (no cross-currency conversion yet). Compare as
-  // BigInt minor units to avoid float drift.
+  // Cross-currency comparison is not meaningful without FX conversion,
+  // which this service does not perform. Fall back to alphabetical
+  // currency code so the sort is deterministic rather than silently wrong.
+  if (a.currency !== b.currency) {
+    return a.currency < b.currency ? -1 : 1;
+  }
   const am = toMinorUnits(a.amount, a.currency);
   const bm = toMinorUnits(b.amount, b.currency);
   return am < bm ? -1 : am > bm ? 1 : 0;
 }
 
-function cheapestSellMinor(hotel: SearchResultHotel): number {
-  if (hotel.rates.length === 0) return Number.MAX_SAFE_INTEGER;
-  let cheapest = toMinorUnits(
-    hotel.rates[0]!.priceQuote.sellingPrice.amount,
-    hotel.rates[0]!.priceQuote.sellingPrice.currency,
+function compareHotelsByPrice(
+  a: SearchResultHotel,
+  b: SearchResultHotel,
+): number {
+  // rates[0] is the cheapest after groupByHotel's within-hotel sort.
+  const aRate = a.rates[0];
+  const bRate = b.rates[0];
+  if (!aRate && !bRate) return 0;
+  if (!aRate) return 1;
+  if (!bRate) return -1;
+  return compareSellingPriceAsc(
+    aRate.priceQuote.sellingPrice,
+    bRate.priceQuote.sellingPrice,
   );
-  for (const r of hotel.rates) {
-    const m = toMinorUnits(
-      r.priceQuote.sellingPrice.amount,
-      r.priceQuote.sellingPrice.currency,
-    );
-    if (m < cheapest) cheapest = m;
+}
+
+function collectCurrencies(
+  hotels: ReadonlyArray<SearchResultHotel>,
+): string[] {
+  const set = new Set<string>();
+  for (const h of hotels) {
+    for (const r of h.rates) {
+      set.add(r.priceQuote.sellingPrice.currency);
+    }
   }
-  // Number conversion is only used to feed Array.sort(); minor-unit
-  // values fit comfortably in MAX_SAFE_INTEGER for any realistic
-  // hotel rate.
-  return Number(cheapest);
+  return Array.from(set).sort();
 }

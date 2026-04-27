@@ -236,6 +236,14 @@ export interface SearchResponseMeta {
   readonly generatedAt: string;
   readonly accountContext: AccountContext;
   readonly currency: CurrencyCode;
+  /**
+   * Sorted deduplicated list of all selling-price currencies present
+   * across every rate in this response (B7 mixed-currency hardening).
+   * Length > 1 means cross-currency sorting was applied; consumers
+   * should show per-rate currency labels rather than a single header
+   * currency. No FX conversion is performed.
+   */
+  readonly currencies: ReadonlyArray<CurrencyCode>;
   readonly resultCount: number;
 }
 

@@ -6,6 +6,7 @@ import { AdaptersModule } from './adapters/adapters.module';
 import { SearchModule } from './search/search.module';
 import { AdminModule } from './admin/admin.module';
 import { DirectContractsModule } from './direct-contracts/direct-contracts.module';
+import { FxModule } from './fx/fx.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { DirectContractsModule } from './direct-contracts/direct-contracts.modul
     SearchModule,
     AdminModule,
     DirectContractsModule,
+    FxModule,
   ],
 })
 export class AppModule {}
