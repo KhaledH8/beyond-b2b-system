@@ -5,6 +5,8 @@ import { PgAccountRepository } from './account.repository';
 import { PgHotelSupplierRepository } from './hotel-supplier.repository';
 import { PgMarkupRuleRepository } from './markup-rule.repository';
 import { PgPromotionRepository } from './promotion.repository';
+import { PgAuthoredSearchRepository } from './authored-search.repository';
+import { AuthoredSearchService } from './authored-search.service';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 
@@ -29,6 +31,8 @@ import { SearchService } from './search.service';
     PgHotelSupplierRepository,
     PgMarkupRuleRepository,
     PgPromotionRepository,
+    PgAuthoredSearchRepository,
+    AuthoredSearchService,
     SearchService,
   ],
   exports: [SearchService],

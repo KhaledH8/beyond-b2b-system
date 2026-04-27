@@ -2,6 +2,7 @@ import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { evaluateSourcedOffer, toMinorUnits } from '@bb/pricing';
 import type {
   AccountContext,
+  MarkupRuleSnapshot,
   PromotionTag,
   SearchRequest,
   SearchResponse,
@@ -19,6 +20,11 @@ import { PgAccountRepository } from './account.repository';
 import { PgHotelSupplierRepository } from './hotel-supplier.repository';
 import { PgMarkupRuleRepository } from './markup-rule.repository';
 import { PgPromotionRepository } from './promotion.repository';
+import { PgAuthoredSearchRepository } from './authored-search.repository';
+import {
+  AuthoredSearchService,
+  type PricedAuthoredEntry,
+} from './authored-search.service';
 
 /**
  * Channel-aware search orchestrator.
@@ -30,24 +36,31 @@ import { PgPromotionRepository } from './promotion.repository';
  *      `offer_sourced_snapshot` rows.
  *   3. Translate the supplier hotel codes the adapter returned into
  *      `hotel_supplier.id` ULIDs (used by HOTEL-scope rules and
- *      promotions).
+ *      promotions); separately resolve canonical hotel ids via
+ *      `hotel_mapping` for authored fan-out + cross-supplier
+ *      correlation in the response.
  *   4. Load applicable markup rules + promotions from Postgres.
- *   5. Evaluate pricing per rate via the pure `@bb/pricing` evaluator.
- *      `createProvisionalResolver` is still in place upstream, so
- *      every rate carries `moneyMovementProvenance = PROVISIONAL`
- *      and the booking guard refuses it. The response surfaces this
- *      explicitly — pricing does not gate on it.
- *   6. Group rates by supplier hotel, attach promotion tag, sort
- *      hotels by their cheapest selling price (price-sort baseline).
+ *   5. Evaluate sourced rates via the pure `@bb/pricing`
+ *      `evaluateSourcedOffer`. `createProvisionalResolver` is still
+ *      in place upstream, so every sourced rate carries
+ *      `moneyMovementProvenance = PROVISIONAL` and the booking guard
+ *      refuses it. The response surfaces this explicitly.
+ *   6. Run the authored fan-out (`AuthoredSearchService`) for the
+ *      same canonical hotels. Authored offers are non-provisional
+ *      (`CONFIG_RESOLVED`) and bookable; ADR-023 restrictions and
+ *      cancellation policies are deferred to Phase B and are NOT
+ *      consulted here.
+ *   7. Merge sourced + authored entries, group by
+ *      `(supplierId, supplierHotelCode)`, attach promotion tags,
+ *      sort by cheapest selling price.
  *
  * Pricing is the only step that mutates rate amounts. Merchandising
  * runs after and only attaches a tag — it never reorders past the
  * price-ascending baseline. CLAUDE.md invariant respected.
  *
- * Multi-supplier search lands in a later slice. For now the service
- * fans out to `'hotelbeds'` only; the registry already supports the
- * lookup pattern so adding a second supplier is additive (one more
- * `Promise.all` entry plus rule scoping).
+ * Sourced rates retain their existing PROVISIONAL guarantee; authored
+ * rates are added as additional results, never overwriting or
+ * replacing sourced ones for the same hotel.
  */
 @Injectable()
 export class SearchService {
@@ -62,6 +75,10 @@ export class SearchService {
     private readonly markupRules: PgMarkupRuleRepository,
     @Inject(PgPromotionRepository)
     private readonly promotions: PgPromotionRepository,
+    @Inject(PgAuthoredSearchRepository)
+    private readonly authoredRepo: PgAuthoredSearchRepository,
+    @Inject(AuthoredSearchService)
+    private readonly authoredService: AuthoredSearchService,
   ) {}
 
   async search(req: SearchRequest): Promise<SearchResponse> {
@@ -123,45 +140,102 @@ export class SearchService {
       allRates.push(...next);
     }
 
-    // Step 3 — code → hotel_supplier.id translation.
-    const observedCodes = Array.from(
-      new Set(allRates.map((r) => r.supplierHotelId)),
-    );
-    const codeToId = await this.hotelSuppliers.resolveCodes(
-      'hotelbeds',
-      observedCodes,
-    );
-    const supplierHotelIds = Array.from(codeToId.values());
+    // Step 3 — code → hotel_supplier.id translation (sourced HOTEL
+    // scope), and canonical-hotel resolution (authored fan-out +
+    // cross-supplier correlation in the response).
+    const observedCodes = uniq(allRates.map((r) => r.supplierHotelId));
+    const requestedCodes = uniq([...req.supplierHotelIds, ...observedCodes]);
+    const [codeToId, canonicalLookups] = await Promise.all([
+      this.hotelSuppliers.resolveCodes('hotelbeds', observedCodes),
+      this.authoredRepo.resolveCanonicalForSupplierCodes(
+        'hotelbeds',
+        requestedCodes,
+      ),
+    ]);
+    const codeToCanonical = new Map<string, string>();
+    for (const l of canonicalLookups) {
+      codeToCanonical.set(l.supplierHotelCode, l.canonicalHotelId);
+    }
 
-    // Step 4 — rule + promotion fetch.
+    // Step 4 — rule + promotion fetch. Rules already cover any
+    // supplier_hotel_id observed via either path; we union the
+    // sourced + authored ULIDs we'll evaluate against.
+    const sourcedSupplierHotelIds = Array.from(codeToId.values());
+    const authoredCanonicalIds = uniq(
+      canonicalLookups.map((l) => l.canonicalHotelId),
+    );
+    // Authored offers may key HOTEL-scope rules off the DIRECT
+    // supplier's `hotel_supplier.id`. Pre-resolve those too so the
+    // single rule fetch covers both paths.
+    const authoredContracts = authoredCanonicalIds.length
+      ? await this.authoredRepo.findActiveContracts({
+          tenantId: ctx.tenantId,
+          canonicalHotelIds: authoredCanonicalIds,
+          checkIn: req.checkIn,
+          checkOut: req.checkOut,
+        })
+      : [];
+    const authoredSupplierIds = uniq(authoredContracts.map((c) => c.supplierId));
+    const authoredMappings = authoredSupplierIds.length
+      ? await this.authoredRepo.findDirectSupplierHotelMappings(
+          authoredSupplierIds,
+          authoredCanonicalIds,
+        )
+      : [];
+    const ruleSupplierHotelIds = uniq([
+      ...sourcedSupplierHotelIds,
+      ...authoredMappings.map((m) => m.supplierHotelId),
+    ]);
+
     const [rules, promotionsByHotelId] = await Promise.all([
       this.markupRules.findApplicable({
         tenantId: ctx.tenantId,
         accountId: ctx.accountId,
         accountType: ctx.accountType,
-        supplierHotelIds,
+        supplierHotelIds: ruleSupplierHotelIds,
       }),
       this.promotions.findApplicable({
         tenantId: ctx.tenantId,
         accountType: ctx.accountType,
-        supplierHotelIds,
+        supplierHotelIds: ruleSupplierHotelIds,
       }),
     ]);
 
-    // Step 5 — price each rate.
-    const priced = allRates.map((rate) =>
-      this.priceOne(rate, codeToId, rules, ctx),
+    // Step 5 — price each sourced rate.
+    const sourcedPriced: PricedEntry[] = allRates.map((rate) =>
+      this.priceSourced(rate, codeToId, codeToCanonical, rules, ctx),
     );
 
-    // Step 6 — group by hotel, attach promotion, sort by cheapest sell.
-    const grouped = groupByHotel(priced);
+    // Step 6 — authored fan-out (re-uses the canonical lookups so
+    // it does not pay another resolver round-trip).
+    const authoredPriced = canonicalLookups.length
+      ? await this.authoredService.assemble({
+          canonicalLookups,
+          tenantId: ctx.tenantId,
+          checkIn: req.checkIn,
+          checkOut: req.checkOut,
+          adults: req.occupancy.adults,
+          children: req.occupancy.children,
+          childAges: req.occupancy.childAges ?? [],
+          rules,
+          ctx,
+        })
+      : ([] as ReadonlyArray<PricedAuthoredEntry>);
+    const authoredEntries: PricedEntry[] = authoredPriced.map(toPricedEntry);
+
+    // Step 7 — merge, group, attach promotions, sort.
+    const merged: PricedEntry[] = [...sourcedPriced, ...authoredEntries];
+    const grouped = groupByHotel(merged);
     const results: SearchResultHotel[] = grouped.map((g) => {
-      const tag = supplierHotelIdFor(g.supplierHotelCode, codeToId);
-      const promo: PromotionTag | undefined =
-        tag !== undefined ? promotionsByHotelId.get(tag) : undefined;
+      const promo: PromotionTag | undefined = g.supplierHotelId
+        ? promotionsByHotelId.get(g.supplierHotelId)
+        : undefined;
       return {
-        supplierId: 'hotelbeds',
+        supplierId: g.supplierId,
         supplierHotelCode: g.supplierHotelCode,
+        ...(g.canonicalHotelId !== undefined
+          ? { canonicalHotelId: g.canonicalHotelId }
+          : {}),
         rates: g.rates,
         ...(promo !== undefined ? { promotion: promo } : {}),
       };
@@ -184,13 +258,15 @@ export class SearchService {
     };
   }
 
-  private priceOne(
+  private priceSourced(
     rate: AdapterSupplierRate,
     codeToId: ReadonlyMap<string, string>,
-    rules: ReadonlyArray<Parameters<typeof evaluateSourcedOffer>[1][number]>,
+    codeToCanonical: ReadonlyMap<string, string>,
+    rules: ReadonlyArray<MarkupRuleSnapshot>,
     ctx: AccountContext,
-  ): { result: SearchResultRate; supplierHotelCode: string; sellMinor: bigint } {
+  ): PricedEntry {
     const supplierHotelId = codeToId.get(rate.supplierHotelId) ?? '';
+    const canonicalHotelId = codeToCanonical.get(rate.supplierHotelId);
     const netMinor = toMinorUnits(
       rate.grossAmount.amount,
       rate.grossAmount.currency,
@@ -239,7 +315,10 @@ export class SearchService {
     );
     return {
       result,
+      supplierId: 'hotelbeds',
       supplierHotelCode: rate.supplierHotelId,
+      supplierHotelId,
+      ...(canonicalHotelId !== undefined ? { canonicalHotelId } : {}),
       sellMinor,
     };
   }
@@ -250,24 +329,57 @@ export class SearchService {
 // ---------------------------------------------------------------------------
 
 interface PricedEntry {
-  result: SearchResultRate;
-  supplierHotelCode: string;
-  sellMinor: bigint;
+  readonly result: SearchResultRate;
+  readonly supplierId: string;
+  readonly supplierHotelCode: string;
+  readonly supplierHotelId: string;
+  readonly canonicalHotelId?: string;
+  readonly sellMinor: bigint;
+}
+
+function toPricedEntry(e: PricedAuthoredEntry): PricedEntry {
+  return {
+    result: e.result,
+    supplierId: e.supplierCode,
+    supplierHotelCode: e.supplierHotelCode,
+    supplierHotelId: e.supplierHotelId,
+    canonicalHotelId: e.canonicalHotelId,
+    sellMinor: e.sellMinor,
+  };
+}
+
+function uniq<T>(arr: ReadonlyArray<T>): T[] {
+  return Array.from(new Set(arr));
 }
 
 function groupByHotel(rows: ReadonlyArray<PricedEntry>): Array<{
+  supplierId: string;
   supplierHotelCode: string;
+  supplierHotelId: string;
+  canonicalHotelId: string | undefined;
   rates: SearchResultRate[];
   cheapestSellMinor: bigint;
 }> {
   const map = new Map<
     string,
-    { rates: SearchResultRate[]; cheapestSellMinor: bigint }
+    {
+      supplierId: string;
+      supplierHotelCode: string;
+      supplierHotelId: string;
+      canonicalHotelId: string | undefined;
+      rates: SearchResultRate[];
+      cheapestSellMinor: bigint;
+    }
   >();
   for (const row of rows) {
-    const entry = map.get(row.supplierHotelCode);
+    const key = `${row.supplierId}::${row.supplierHotelCode}`;
+    const entry = map.get(key);
     if (!entry) {
-      map.set(row.supplierHotelCode, {
+      map.set(key, {
+        supplierId: row.supplierId,
+        supplierHotelCode: row.supplierHotelCode,
+        supplierHotelId: row.supplierHotelId,
+        canonicalHotelId: row.canonicalHotelId,
         rates: [row.result],
         cheapestSellMinor: row.sellMinor,
       });
@@ -276,19 +388,25 @@ function groupByHotel(rows: ReadonlyArray<PricedEntry>): Array<{
       if (row.sellMinor < entry.cheapestSellMinor) {
         entry.cheapestSellMinor = row.sellMinor;
       }
+      if (entry.canonicalHotelId === undefined && row.canonicalHotelId !== undefined) {
+        entry.canonicalHotelId = row.canonicalHotelId;
+      }
     }
   }
   // Sort each hotel's rates by selling price ascending.
   const out: Array<{
+    supplierId: string;
     supplierHotelCode: string;
+    supplierHotelId: string;
+    canonicalHotelId: string | undefined;
     rates: SearchResultRate[];
     cheapestSellMinor: bigint;
   }> = [];
-  for (const [supplierHotelCode, value] of map.entries()) {
+  for (const value of map.values()) {
     value.rates.sort((a, b) =>
       compareSellingPriceAsc(a.priceQuote.sellingPrice, b.priceQuote.sellingPrice),
     );
-    out.push({ supplierHotelCode, ...value });
+    out.push(value);
   }
   return out;
 }
@@ -322,11 +440,4 @@ function cheapestSellMinor(hotel: SearchResultHotel): number {
   // values fit comfortably in MAX_SAFE_INTEGER for any realistic
   // hotel rate.
   return Number(cheapest);
-}
-
-function supplierHotelIdFor(
-  code: string,
-  codeToId: ReadonlyMap<string, string>,
-): string | undefined {
-  return codeToId.get(code);
 }

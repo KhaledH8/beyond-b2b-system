@@ -182,6 +182,16 @@ export interface SearchResultRate {
 export interface SearchResultHotel {
   readonly supplierId: string;
   readonly supplierHotelCode: string;
+  /**
+   * Canonical hotel id (ADR-002, ADR-008) the result resolves to, when
+   * known. Optional because some supplier results have not yet been
+   * mapped to a canonical hotel — those degrade to undefined rather
+   * than fabricate a value. Consumers use this to correlate results
+   * for the same real-world property across different suppliers
+   * (e.g. an aggregator-sourced result and a direct-contract-authored
+   * result for the same hotel).
+   */
+  readonly canonicalHotelId?: string;
   readonly rates: ReadonlyArray<SearchResultRate>;
   readonly promotion?: PromotionTag;
 }
