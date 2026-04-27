@@ -32,7 +32,12 @@ import {
   type RestrictionAdminRow,
 } from './restriction.repository';
 import {
+  CancellationPolicyRepository,
+  type CancellationPolicyAdminRow,
+} from './cancellation-policy.repository';
+import {
   RESTRICTION_KINDS_FORBIDDEN_FOR_CONTRACT_SCOPED,
+  validateCancellationWindows,
   validateRestrictionParams,
   type RestrictionKind,
 } from './validation';
@@ -169,6 +174,29 @@ export interface CreateSupplierRestrictionInput {
   effectiveTo: string | null;
 }
 
+export interface CreateContractCancellationPolicyInput {
+  contractId: string;
+  tenantId: string;
+  supplierId: string;
+  canonicalHotelId: string;
+  ratePlanId: string | null;
+  windowsJsonb: ReadonlyArray<unknown>;
+  refundable: boolean;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export interface CreateSupplierCancellationPolicyInput {
+  tenantId: string;
+  supplierId: string;
+  canonicalHotelId: string;
+  ratePlanId: string | null;
+  windowsJsonb: ReadonlyArray<unknown>;
+  refundable: boolean;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -191,6 +219,8 @@ export class DirectContractsService {
     private readonly mealSuppRepo: MealSupplementRepository,
     @Inject(RestrictionRepository)
     private readonly restrictionRepo: RestrictionRepository,
+    @Inject(CancellationPolicyRepository)
+    private readonly cancelPolicyRepo: CancellationPolicyRepository,
   ) {}
 
   // ---- contracts -----------------------------------------------------------
@@ -1213,6 +1243,281 @@ export class DirectContractsService {
     includeSuperseded?: boolean;
   }): Promise<ReadonlyArray<RestrictionAdminRow>> {
     return this.restrictionRepo.listSupplierDefault(args);
+  }
+
+  // ---- cancellation policies (ADR-023) -------------------------------------
+  //
+  // Mirrors the restrictions surface (B2): two deliberately separate
+  // entry points (contract-scoped and supplier-default) with create +
+  // supersede + read paths and no delete (ADR-023 D8). Differences
+  // from restrictions:
+  //
+  //   • `policy_version` is computed inside the repository while it
+  //     holds a parent-row lock, so two concurrent writes in the same
+  //     scope never observe the same MAX. The version increments
+  //     monotonically per ADR-023 D5; the repository owns the math.
+  //   • `windows_jsonb` is structurally validated in the service
+  //     (D5: "the service is the authoritative validator"). The DB
+  //     stores it as opaque JSONB.
+  //   • There is no `season_id` column (ADR-023 D1, last paragraph).
+  //   • All channel-manager-vs-direct asymmetry from restrictions
+  //     does NOT apply here — cancellation policies are uniform across
+  //     contract-scoped and supplier-default surfaces.
+
+  async createContractCancellationPolicy(
+    input: CreateContractCancellationPolicyInput,
+    actorId: string,
+  ): Promise<CancellationPolicyAdminRow> {
+    validateCancellationWindows(input.windowsJsonb);
+
+    const contract = await this.contractRepo.findById(
+      input.contractId,
+      input.tenantId,
+    );
+    if (!contract) {
+      throw new NotFoundException(`contract ${input.contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot add cancellation policies to an INACTIVE contract',
+      );
+    }
+    if (input.supplierId !== contract.supplierId) {
+      throw new BadRequestException(
+        'cancellation policy supplierId must match the contract supplierId',
+      );
+    }
+    if (input.canonicalHotelId !== contract.canonicalHotelId) {
+      throw new BadRequestException(
+        'cancellation policy canonicalHotelId must match the contract canonicalHotelId',
+      );
+    }
+
+    const row = await this.cancelPolicyRepo.create({
+      id: newUlid(),
+      tenantId: input.tenantId,
+      supplierId: input.supplierId,
+      canonicalHotelId: input.canonicalHotelId,
+      ratePlanId: input.ratePlanId,
+      contractId: input.contractId,
+      windowsJsonb: input.windowsJsonb,
+      refundable: input.refundable,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo,
+    });
+
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'direct_contract_cancellation_policy',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async createSupplierCancellationPolicy(
+    input: CreateSupplierCancellationPolicyInput,
+    actorId: string,
+  ): Promise<CancellationPolicyAdminRow> {
+    validateCancellationWindows(input.windowsJsonb);
+    await this.requireDirectSupplier(input.supplierId);
+
+    const row = await this.cancelPolicyRepo.create({
+      id: newUlid(),
+      tenantId: input.tenantId,
+      supplierId: input.supplierId,
+      canonicalHotelId: input.canonicalHotelId,
+      ratePlanId: input.ratePlanId,
+      contractId: null,
+      windowsJsonb: input.windowsJsonb,
+      refundable: input.refundable,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo,
+    });
+
+    await this.audit.write({
+      tenantId: input.tenantId,
+      actorId,
+      resourceType: 'supplier_default_cancellation_policy',
+      resourceId: row.id,
+      operation: 'CREATE',
+      payload: input as unknown as Record<string, unknown>,
+    });
+    return row;
+  }
+
+  async supersedeContractCancellationPolicy(
+    contractId: string,
+    tenantId: string,
+    oldId: string,
+    newInput: CreateContractCancellationPolicyInput,
+    actorId: string,
+  ): Promise<CancellationPolicyAdminRow> {
+    validateCancellationWindows(newInput.windowsJsonb);
+
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) {
+      throw new NotFoundException(`contract ${contractId} not found`);
+    }
+    if (contract.status === 'INACTIVE') {
+      throw new BadRequestException(
+        'cannot supersede cancellation policies on an INACTIVE contract',
+      );
+    }
+    if (newInput.supplierId !== contract.supplierId) {
+      throw new BadRequestException(
+        'cancellation policy supplierId must match the contract supplierId',
+      );
+    }
+    if (newInput.canonicalHotelId !== contract.canonicalHotelId) {
+      throw new BadRequestException(
+        'cancellation policy canonicalHotelId must match the contract canonicalHotelId',
+      );
+    }
+
+    const result = await this.cancelPolicyRepo.supersede({
+      oldId,
+      requireContractId: contractId,
+      newRow: {
+        id: newUlid(),
+        tenantId: newInput.tenantId,
+        supplierId: newInput.supplierId,
+        canonicalHotelId: newInput.canonicalHotelId,
+        ratePlanId: newInput.ratePlanId,
+        contractId,
+        windowsJsonb: newInput.windowsJsonb,
+        refundable: newInput.refundable,
+        effectiveFrom: newInput.effectiveFrom,
+        effectiveTo: newInput.effectiveTo,
+      },
+    });
+
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_cancellation_policy',
+      resourceId: result.newRow.id,
+      operation: 'CREATE',
+      payload: {
+        ...(newInput as unknown as Record<string, unknown>),
+        supersedesId: oldId,
+      },
+    });
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'direct_contract_cancellation_policy',
+      resourceId: oldId,
+      operation: 'PATCH',
+      payload: { supersededById: result.newRow.id },
+    });
+
+    return result.newRow;
+  }
+
+  async supersedeSupplierCancellationPolicy(
+    tenantId: string,
+    oldId: string,
+    newInput: CreateSupplierCancellationPolicyInput,
+    actorId: string,
+  ): Promise<CancellationPolicyAdminRow> {
+    validateCancellationWindows(newInput.windowsJsonb);
+    await this.requireDirectSupplier(newInput.supplierId);
+
+    // Cross-tenant + cross-surface guard: the old row must belong to
+    // the caller's tenant AND have NULL contract_id (otherwise it is
+    // a contract-scoped policy and the contract-scoped supersede
+    // endpoint owns it).
+    const existing = await this.cancelPolicyRepo.findById(oldId, tenantId);
+    if (!existing) {
+      throw new NotFoundException(`cancellation policy ${oldId} not found`);
+    }
+    if (existing.contractId !== null) {
+      throw new NotFoundException(
+        `cancellation policy ${oldId} is contract-scoped; use the contract-scoped supersede endpoint`,
+      );
+    }
+
+    const result = await this.cancelPolicyRepo.supersede({
+      oldId,
+      requireContractId: null,
+      newRow: {
+        id: newUlid(),
+        tenantId: newInput.tenantId,
+        supplierId: newInput.supplierId,
+        canonicalHotelId: newInput.canonicalHotelId,
+        ratePlanId: newInput.ratePlanId,
+        contractId: null,
+        windowsJsonb: newInput.windowsJsonb,
+        refundable: newInput.refundable,
+        effectiveFrom: newInput.effectiveFrom,
+        effectiveTo: newInput.effectiveTo,
+      },
+    });
+
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'supplier_default_cancellation_policy',
+      resourceId: result.newRow.id,
+      operation: 'CREATE',
+      payload: {
+        ...(newInput as unknown as Record<string, unknown>),
+        supersedesId: oldId,
+      },
+    });
+    await this.audit.write({
+      tenantId,
+      actorId,
+      resourceType: 'supplier_default_cancellation_policy',
+      resourceId: oldId,
+      operation: 'PATCH',
+      payload: { supersededById: result.newRow.id },
+    });
+
+    return result.newRow;
+  }
+
+  async findContractCancellationPolicyById(
+    contractId: string,
+    tenantId: string,
+    id: string,
+  ): Promise<CancellationPolicyAdminRow | null> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.cancelPolicyRepo.findContractScopedById(id, contractId);
+  }
+
+  async findSupplierCancellationPolicyById(
+    tenantId: string,
+    id: string,
+  ): Promise<CancellationPolicyAdminRow | null> {
+    const row = await this.cancelPolicyRepo.findById(id, tenantId);
+    if (!row) return null;
+    if (row.contractId !== null) return null;
+    return row;
+  }
+
+  async listContractCancellationPolicies(
+    contractId: string,
+    tenantId: string,
+    opts: { includeSuperseded?: boolean } = {},
+  ): Promise<ReadonlyArray<CancellationPolicyAdminRow>> {
+    const contract = await this.contractRepo.findById(contractId, tenantId);
+    if (!contract) throw new NotFoundException(`contract ${contractId} not found`);
+    return this.cancelPolicyRepo.listForContract(contractId, opts);
+  }
+
+  async listSupplierCancellationPolicies(args: {
+    tenantId: string;
+    supplierId: string;
+    canonicalHotelId: string;
+    ratePlanId?: string;
+    includeSuperseded?: boolean;
+  }): Promise<ReadonlyArray<CancellationPolicyAdminRow>> {
+    return this.cancelPolicyRepo.listSupplierDefault(args);
   }
 
   // ---- private helpers -----------------------------------------------------

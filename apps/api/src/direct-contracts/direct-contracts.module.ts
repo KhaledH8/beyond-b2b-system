@@ -9,6 +9,7 @@ import { BaseRateRepository } from './base-rate.repository';
 import { OccupancySupplementRepository } from './occupancy-supplement.repository';
 import { MealSupplementRepository } from './meal-supplement.repository';
 import { RestrictionRepository } from './restriction.repository';
+import { CancellationPolicyRepository } from './cancellation-policy.repository';
 import { DirectContractsService } from './direct-contracts.service';
 import { ContractAdminController } from './contract.controller';
 import { SeasonAdminController } from './season.controller';
@@ -20,6 +21,10 @@ import {
   ContractRestrictionAdminController,
   SupplierRestrictionAdminController,
 } from './restriction.controller';
+import {
+  ContractCancellationPolicyAdminController,
+  SupplierCancellationPolicyAdminController,
+} from './cancellation-policy.controller';
 
 @Module({
   imports: [DatabaseModule],
@@ -32,6 +37,8 @@ import {
     MealSupplementAdminController,
     ContractRestrictionAdminController,
     SupplierRestrictionAdminController,
+    ContractCancellationPolicyAdminController,
+    SupplierCancellationPolicyAdminController,
   ],
   providers: [
     InternalAuthGuard,
@@ -43,6 +50,7 @@ import {
     OccupancySupplementRepository,
     MealSupplementRepository,
     RestrictionRepository,
+    CancellationPolicyRepository,
     DirectContractsService,
   ],
 })

@@ -1884,6 +1884,448 @@ describeIntegration(
     });
 
     // -----------------------------------------------------------------------
+    // Slice B3 · contract-scoped cancellation policies
+    // -----------------------------------------------------------------------
+
+    describe('contract cancellation policies · CRUD + supersede', () => {
+      let cpContractId: string;
+      let cpRatePlanId: string;
+      let cpFirstId: string;
+
+      const VALID_WINDOWS = [
+        {
+          from_hours_before: 72,
+          to_hours_before: 0,
+          fee_type: 'PERCENT_OF_TOTAL',
+          fee_value: 100,
+        },
+        {
+          from_hours_before: null,
+          to_hours_before: 72,
+          fee_type: 'FLAT',
+          fee_value: 0,
+          fee_currency: null,
+        },
+      ];
+
+      beforeAll(async () => {
+        const slug = `cp-${randomBytes(4).toString('hex')}`;
+        const cRes = await post('/internal/admin/direct-contracts/contracts', {
+          tenantId,
+          canonicalHotelId: hotelId,
+          supplierId,
+          contractCode: `CP-${slug}`,
+          currency: 'EUR',
+        });
+        cpContractId = ((await cRes.json()) as AnyJson).id as string;
+
+        cpRatePlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
+           VALUES ($1, $2, $3, $4, 'PUBLIC_BAR')`,
+          [cpRatePlanId, hotelId, `CPRP-${slug}`, 'CP Rate Plan'],
+        );
+      }, 30_000);
+
+      it('creates a cancellation policy with policy_version = 1', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            ratePlanId: cpRatePlanId,
+            windowsJsonb: VALID_WINDOWS,
+            refundable: true,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        cpFirstId = body.id as string;
+        expect(body.contractId).toBe(cpContractId);
+        expect(body.policyVersion).toBe(1);
+        expect(body.refundable).toBe(true);
+        expect(body.supersededById).toBeNull();
+        expect(Array.isArray(body.windowsJsonb)).toBe(true);
+      });
+
+      it('a second create in the same scope advances policy_version to 2', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            ratePlanId: cpRatePlanId,
+            windowsJsonb: VALID_WINDOWS,
+            refundable: true,
+            effectiveFrom: '2026-04-15T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        expect(body.policyVersion).toBe(2);
+      });
+
+      it('rejects an empty windowsJsonb array', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: [],
+            refundable: false,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects a window with an unknown fee_type', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: [
+              {
+                from_hours_before: 24,
+                to_hours_before: 0,
+                fee_type: 'BANANA',
+                fee_value: 10,
+              },
+            ],
+            refundable: false,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects a window where from_hours_before < to_hours_before', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: [
+              {
+                from_hours_before: 12,
+                to_hours_before: 24,
+                fee_type: 'PERCENT_OF_TOTAL',
+                fee_value: 100,
+              },
+            ],
+            refundable: false,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects an unknown key inside a window', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: [
+              {
+                from_hours_before: 24,
+                to_hours_before: 0,
+                fee_type: 'PERCENT_OF_TOTAL',
+                fee_value: 100,
+                surprise: 'no',
+              },
+            ],
+            refundable: false,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects when supplierId differs from the contract supplier', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId: aggregatorSupplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: VALID_WINDOWS,
+            refundable: true,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('blocks creation on an INACTIVE contract', async () => {
+        const slug2 = `cp-inactive-${randomBytes(4).toString('hex')}`;
+        const cRes = await post(
+          '/internal/admin/direct-contracts/contracts',
+          {
+            tenantId,
+            canonicalHotelId: hotelId,
+            supplierId,
+            contractCode: `CPINK-${slug2}`,
+            currency: 'EUR',
+          },
+        );
+        const inactiveId = ((await cRes.json()) as AnyJson).id as string;
+        await patch(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}?tenantId=${tenantId}`,
+          { status: 'INACTIVE' },
+        );
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${inactiveId}/cancellation-policies`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: VALID_WINDOWS,
+            refundable: true,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('lists active policies for the contract (sorted by policy_version DESC)', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as AnyJson;
+        expect(body.count).toBeGreaterThanOrEqual(2);
+        const versions = (body.items as AnyJson[]).map((r) => r.policyVersion);
+        for (let i = 1; i < versions.length; i++) {
+          expect(versions[i - 1]).toBeGreaterThanOrEqual(versions[i]);
+        }
+      });
+
+      it('gets a single policy by id', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies/${cpFirstId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).id).toBe(cpFirstId);
+      });
+
+      it('does not expose a PATCH route', async () => {
+        const res = await patch(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies/${cpFirstId}?tenantId=${tenantId}`,
+          { refundable: false },
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('does not expose a DELETE route', async () => {
+        const res = await del(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies/${cpFirstId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('supersedes a policy: new row carries old.version+1, old.superseded_by_id is set, paired audit', async () => {
+        // Capture the current version of cpFirstId before superseding.
+        const beforeRes = await get(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies/${cpFirstId}?tenantId=${tenantId}`,
+        );
+        const oldRow = (await beforeRes.json()) as AnyJson;
+        const oldVersion = oldRow.policyVersion as number;
+
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies/${cpFirstId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            ratePlanId: cpRatePlanId,
+            windowsJsonb: VALID_WINDOWS,
+            refundable: false,
+            effectiveFrom: '2026-05-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const newRow = (await res.json()) as AnyJson;
+        expect(newRow.id).not.toBe(cpFirstId);
+        expect(newRow.policyVersion).toBeGreaterThan(oldVersion);
+        expect(newRow.refundable).toBe(false);
+        expect(newRow.supersededById).toBeNull();
+
+        // Old row carries the supersede link.
+        const { rows: oldRows } = await pool.query<{
+          superseded_by_id: string | null;
+        }>(
+          `SELECT superseded_by_id FROM rate_auth_cancellation_policy WHERE id = $1`,
+          [cpFirstId],
+        );
+        expect(oldRows[0]!.superseded_by_id).toBe(newRow.id);
+
+        // CREATE for new, PATCH on old, no SUPERSEDE op.
+        const { rows: newAudit } = await pool.query<{ operation: string }>(
+          `SELECT operation FROM admin_audit_log WHERE resource_id = $1 ORDER BY created_at ASC`,
+          [newRow.id],
+        );
+        expect(newAudit.map((r) => r.operation)).toContain('CREATE');
+        const { rows: oldAudit } = await pool.query<{ operation: string }>(
+          `SELECT operation FROM admin_audit_log WHERE resource_id = $1 ORDER BY created_at ASC`,
+          [cpFirstId],
+        );
+        const ops = oldAudit.map((r) => r.operation);
+        expect(ops).toContain('CREATE');
+        expect(ops).toContain('PATCH');
+        expect(ops).not.toContain('SUPERSEDE');
+      });
+
+      it('rejects a second supersede on an already-superseded row', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/contracts/${cpContractId}/cancellation-policies/${cpFirstId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            ratePlanId: cpRatePlanId,
+            windowsJsonb: VALID_WINDOWS,
+            refundable: true,
+            effectiveFrom: '2026-06-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(409);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Slice B3 · supplier-default cancellation policies
+    // -----------------------------------------------------------------------
+
+    describe('supplier-default cancellation policies · CRUD + supersede', () => {
+      let supRatePlanId: string;
+      let supPolicyId: string;
+
+      const SIMPLE_WINDOWS = [
+        {
+          from_hours_before: 48,
+          to_hours_before: 0,
+          fee_type: 'FIRST_NIGHT',
+          fee_value: 1,
+        },
+      ];
+
+      beforeAll(async () => {
+        const slug = `sup-cp-${randomBytes(4).toString('hex')}`;
+        supRatePlanId = newUlid();
+        await pool.query(
+          `INSERT INTO hotel_rate_plan (id, canonical_hotel_id, code, name, rate_class)
+           VALUES ($1, $2, $3, $4, 'PUBLIC_BAR')`,
+          [supRatePlanId, hotelId, `SUPCPRP-${slug}`, 'Sup CP Rate Plan'],
+        );
+      }, 30_000);
+
+      it('creates a supplier-default policy with no contract', async () => {
+        const res = await post(
+          '/internal/admin/direct-contracts/supplier-cancellation-policies',
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            ratePlanId: supRatePlanId,
+            windowsJsonb: SIMPLE_WINDOWS,
+            refundable: false,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const body = (await res.json()) as AnyJson;
+        supPolicyId = body.id as string;
+        expect(body.contractId).toBeNull();
+        expect(body.policyVersion).toBe(1);
+        expect(body.refundable).toBe(false);
+      });
+
+      it('rejects an AGGREGATOR supplierId on the supplier-default surface', async () => {
+        const res = await post(
+          '/internal/admin/direct-contracts/supplier-cancellation-policies',
+          {
+            tenantId,
+            supplierId: aggregatorSupplierId,
+            canonicalHotelId: hotelId,
+            windowsJsonb: SIMPLE_WINDOWS,
+            refundable: false,
+            effectiveFrom: '2026-04-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(400);
+      });
+
+      it('lists supplier-default policies filtered by (tenant, supplier, hotel)', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/supplier-cancellation-policies?tenantId=${tenantId}&supplierId=${supplierId}&canonicalHotelId=${hotelId}`,
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as AnyJson;
+        expect(body.count).toBeGreaterThanOrEqual(1);
+        for (const r of body.items as AnyJson[]) {
+          expect(r.contractId).toBeNull();
+        }
+      });
+
+      it('gets a supplier-default policy by id', async () => {
+        const res = await get(
+          `/internal/admin/direct-contracts/supplier-cancellation-policies/${supPolicyId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as AnyJson).id).toBe(supPolicyId);
+      });
+
+      it('returns 404 when a supplier-default GET targets a contract-scoped row', async () => {
+        const { rows } = await pool.query<{ id: string }>(
+          `SELECT id FROM rate_auth_cancellation_policy
+            WHERE tenant_id = $1 AND contract_id IS NOT NULL
+            ORDER BY created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        const contractScopedId = rows[0]?.id;
+        if (!contractScopedId) return;
+        const res = await get(
+          `/internal/admin/direct-contracts/supplier-cancellation-policies/${contractScopedId}?tenantId=${tenantId}`,
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('supersedes a supplier-default policy and increments version', async () => {
+        const res = await post(
+          `/internal/admin/direct-contracts/supplier-cancellation-policies/${supPolicyId}/supersede?tenantId=${tenantId}`,
+          {
+            tenantId,
+            supplierId,
+            canonicalHotelId: hotelId,
+            ratePlanId: supRatePlanId,
+            windowsJsonb: SIMPLE_WINDOWS,
+            refundable: true,
+            effectiveFrom: '2026-05-01T00:00:00Z',
+          },
+        );
+        expect(res.status).toBe(201);
+        const newRow = (await res.json()) as AnyJson;
+        expect(newRow.id).not.toBe(supPolicyId);
+        expect(newRow.policyVersion).toBe(2);
+
+        const { rows } = await pool.query<{ superseded_by_id: string | null }>(
+          `SELECT superseded_by_id FROM rate_auth_cancellation_policy WHERE id = $1`,
+          [supPolicyId],
+        );
+        expect(rows[0]!.superseded_by_id).toBe(newRow.id);
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // HTTP helpers
     // -----------------------------------------------------------------------
 

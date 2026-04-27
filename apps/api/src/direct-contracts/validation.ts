@@ -188,3 +188,124 @@ function assertExactIntKey(
     throw new BadRequestException(`params.${key} must be ≤ ${opts.max}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cancellation policy windows (ADR-023 D5)
+// ---------------------------------------------------------------------------
+
+export const CANCELLATION_FEE_TYPES = [
+  'PERCENT_OF_TOTAL',
+  'FLAT',
+  'FIRST_NIGHT',
+] as const;
+
+export type CancellationFeeType = (typeof CANCELLATION_FEE_TYPES)[number];
+
+const CANCELLATION_FEE_TYPE_SET: ReadonlySet<CancellationFeeType> =
+  new Set<CancellationFeeType>(CANCELLATION_FEE_TYPES);
+
+const CANCELLATION_WINDOW_KEYS: ReadonlyArray<string> = [
+  'from_hours_before',
+  'to_hours_before',
+  'fee_type',
+  'fee_value',
+  'fee_currency',
+];
+
+/**
+ * Service-layer structural validator for `windows_jsonb` (ADR-023 D5).
+ * The DB stores the array as opaque JSONB; this is the single line of
+ * defense against malformed entries reaching the resolver in B6.
+ *
+ * What this validates:
+ *   - non-empty array
+ *   - each window is a JSON object with only the allowed keys
+ *   - `from_hours_before`: non-negative integer or null
+ *     (null = "any time before the adjacent window" per ADR-023 D5)
+ *   - `to_hours_before`: non-negative integer (required)
+ *   - if `from_hours_before` is non-null, it must be ≥ `to_hours_before`
+ *     (a window covers `[to, from]` hours-before-stay)
+ *   - `fee_type`: enum {PERCENT_OF_TOTAL | FLAT | FIRST_NIGHT}
+ *   - `fee_value`: non-negative number or null (null/0 = free per ADR D5)
+ *   - `fee_currency`: 3-letter ISO 4217 string when present (only meaningful for FLAT)
+ *
+ * What this deliberately does NOT validate:
+ *   - array ordering (the resolver in B6 owns ordering semantics)
+ *   - window overlap or gap detection
+ *   - fee_type-specific bounds (e.g., percent ≤ 100) — left to the
+ *     resolver / fee engine when those land
+ *   - fee_currency requirement-per-fee_type
+ */
+export function validateCancellationWindows(value: unknown): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new BadRequestException('windows must be a non-empty JSON array');
+  }
+  for (let i = 0; i < value.length; i++) {
+    const w = value[i];
+    if (typeof w !== 'object' || w === null || Array.isArray(w)) {
+      throw new BadRequestException(`windows[${i}] must be a JSON object`);
+    }
+    const obj = w as Record<string, unknown>;
+
+    for (const key of Object.keys(obj)) {
+      if (!CANCELLATION_WINDOW_KEYS.includes(key)) {
+        throw new BadRequestException(
+          `windows[${i}]: unknown field "${key}". Allowed: ${CANCELLATION_WINDOW_KEYS.join(', ')}`,
+        );
+      }
+    }
+
+    const fromRaw = obj['from_hours_before'];
+    let fromHours: number | null;
+    if (fromRaw === null || fromRaw === undefined) {
+      fromHours = null;
+    } else if (typeof fromRaw === 'number' && Number.isInteger(fromRaw) && fromRaw >= 0) {
+      fromHours = fromRaw;
+    } else {
+      throw new BadRequestException(
+        `windows[${i}].from_hours_before must be a non-negative integer or null`,
+      );
+    }
+
+    const toRaw = obj['to_hours_before'];
+    if (typeof toRaw !== 'number' || !Number.isInteger(toRaw) || toRaw < 0) {
+      throw new BadRequestException(
+        `windows[${i}].to_hours_before must be a non-negative integer`,
+      );
+    }
+
+    if (fromHours !== null && fromHours < toRaw) {
+      throw new BadRequestException(
+        `windows[${i}].from_hours_before must be ≥ to_hours_before`,
+      );
+    }
+
+    const feeType = obj['fee_type'];
+    if (
+      typeof feeType !== 'string' ||
+      !CANCELLATION_FEE_TYPE_SET.has(feeType as CancellationFeeType)
+    ) {
+      throw new BadRequestException(
+        `windows[${i}].fee_type must be one of: ${CANCELLATION_FEE_TYPES.join(', ')}`,
+      );
+    }
+
+    const feeValue = obj['fee_value'];
+    if (feeValue !== null && feeValue !== undefined) {
+      if (typeof feeValue !== 'number' || feeValue < 0) {
+        throw new BadRequestException(
+          `windows[${i}].fee_value must be a non-negative number or null`,
+        );
+      }
+    }
+
+    const feeCurrency = obj['fee_currency'];
+    if (feeCurrency !== null && feeCurrency !== undefined) {
+      if (typeof feeCurrency !== 'string' || !/^[A-Z]{3}$/.test(feeCurrency)) {
+        throw new BadRequestException(
+          `windows[${i}].fee_currency must be a 3-letter ISO 4217 currency code or null`,
+        );
+      }
+    }
+  }
+}
