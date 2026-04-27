@@ -12,7 +12,18 @@ export interface FxRateSnapshotInput {
   readonly observedAt: string;
 }
 
+/**
+ * `FxSnapshot` plus the DB id, so audit-write callers can record which
+ * snapshot a conversion derived from (`fx_application.rate_snapshot_id`,
+ * ADR-024 C4). Structurally a superset of `FxSnapshot`, so the same row
+ * can be passed straight to `applyFx` without copying.
+ */
+export interface FxSnapshotWithId extends FxSnapshot {
+  readonly id: string;
+}
+
 interface FxRateSnapshotRow {
+  readonly id: string;
   readonly provider: string;
   readonly base_currency: string;
   readonly quote_currency: string;
@@ -20,12 +31,13 @@ interface FxRateSnapshotRow {
   readonly observed_at: Date | string;
 }
 
-function rowToSnapshot(row: FxRateSnapshotRow): FxSnapshot {
+function rowToSnapshot(row: FxRateSnapshotRow): FxSnapshotWithId {
   const observedAt =
     row.observed_at instanceof Date
       ? row.observed_at.toISOString()
       : new Date(row.observed_at).toISOString();
   return {
+    id: row.id,
     provider: row.provider,
     baseCurrency: row.base_currency,
     quoteCurrency: row.quote_currency,
@@ -92,12 +104,12 @@ export class FxRateSnapshotRepository {
     provider: string,
     asOf: Date,
     freshnessTtlMinutes: number,
-  ): Promise<FxSnapshot[]> {
+  ): Promise<FxSnapshotWithId[]> {
     const cutoff = new Date(
       asOf.getTime() - freshnessTtlMinutes * 60_000,
     ).toISOString();
     const sql = `
-      SELECT provider, base_currency, quote_currency, rate, observed_at
+      SELECT id, provider, base_currency, quote_currency, rate, observed_at
       FROM fx_rate_snapshot
       WHERE provider = $1 AND observed_at >= $2::timestamptz
       ORDER BY observed_at DESC

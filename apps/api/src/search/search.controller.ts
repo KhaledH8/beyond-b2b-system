@@ -59,7 +59,19 @@ function parseRequest(body: unknown): SearchRequest {
     ...(typeof o['currency'] === 'string'
       ? { currency: o['currency'] }
       : {}),
+    ...(typeof o['displayCurrency'] === 'string'
+      ? { displayCurrency: requireCurrencyCode(o['displayCurrency']) }
+      : {}),
   };
+}
+
+function requireCurrencyCode(v: string): string {
+  if (!/^[A-Z]{3}$/.test(v)) {
+    throw new BadRequestException(
+      'displayCurrency must be a 3-letter uppercase ISO 4217 code',
+    );
+  }
+  return v;
 }
 
 function requireString(o: Record<string, unknown>, key: string): string {

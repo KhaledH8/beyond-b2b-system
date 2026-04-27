@@ -1,7 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Money } from '@bb/domain';
-import { applyFx, type ApplyFxResult, type FxConfig } from '@bb/fx';
-import { FxRateSnapshotRepository } from './fx-rate-snapshot.repository';
+import {
+  applyFx,
+  findFreshestSnapshot,
+  type ApplyFxResult,
+  type FxConfig,
+  type FxSnapshot,
+} from '@bb/fx';
+import {
+  FxRateSnapshotRepository,
+  type FxSnapshotWithId,
+} from './fx-rate-snapshot.repository';
 
 /**
  * OXR primary config.
@@ -51,6 +60,139 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
     );
   }
   return n;
+}
+
+/**
+ * Per-conversion result returned by `BatchConverter.convert`. Identical
+ * shape to `ApplyFxResult` but enriched with `snapshotIds` so the
+ * audit-write step can record which snapshots produced the rate.
+ *
+ * For DIRECT and INVERSE there is exactly one snapshot id. For
+ * CROSS_RATE there are two (pivot→source and pivot→target). The schema
+ * `fx_application.rate_snapshot_id` is single-valued (ADR-024 C1), so
+ * the C4 audit writer records DIRECT/INVERSE only and skips CROSS_RATE
+ * — the displayPrice still appears for the user; the audit row is
+ * deferred to a follow-up that extends the schema.
+ */
+export type FxRateConversion =
+  | {
+      readonly converted: true;
+      readonly displayAmount: Money;
+      readonly appliedRate: string;
+      readonly provider: string;
+      readonly observedAt: string;
+      readonly method: 'DIRECT' | 'INVERSE' | 'CROSS_RATE';
+      readonly pivotCurrency?: string;
+      readonly snapshotIds: ReadonlyArray<string>;
+    }
+  | {
+      readonly converted: false;
+      readonly reason: 'SAME_CURRENCY' | 'NO_RATE';
+    };
+
+/**
+ * In-memory two-tier converter that pre-loads OXR + ECB snapshots
+ * once per request. Each `convert` call is synchronous and zero-DB.
+ *
+ * The batch shape exists because search responses can carry tens of
+ * rates: doing one `findFreshSnapshots` round-trip per rate would
+ * dominate the latency. `FxRateService.loadConverter` runs the two
+ * lookups once; this object then services every per-rate conversion
+ * from memory.
+ */
+export class BatchConverter {
+  constructor(
+    private readonly oxr: ReadonlyArray<FxSnapshotWithId>,
+    private readonly ecb: ReadonlyArray<FxSnapshotWithId>,
+    private readonly asOf: Date,
+    private readonly oxrConfig: FxConfig,
+    private readonly ecbConfig: FxConfig,
+  ) {}
+
+  convert(source: Money, toCurrency: string): FxRateConversion {
+    if (source.currency === toCurrency) {
+      return { converted: false, reason: 'SAME_CURRENCY' };
+    }
+
+    const oxrResult = applyFx(
+      source,
+      toCurrency,
+      this.oxr,
+      this.asOf,
+      this.oxrConfig,
+    );
+    if (oxrResult.converted) {
+      return this.attachIds(oxrResult, source, toCurrency, this.oxr, this.oxrConfig);
+    }
+
+    const ecbResult = applyFx(
+      source,
+      toCurrency,
+      this.ecb,
+      this.asOf,
+      this.ecbConfig,
+    );
+    if (ecbResult.converted) {
+      return this.attachIds(ecbResult, source, toCurrency, this.ecb, this.ecbConfig);
+    }
+
+    return { converted: false, reason: 'NO_RATE' };
+  }
+
+  private attachIds(
+    result: Extract<ApplyFxResult, { converted: true }>,
+    source: Money,
+    toCurrency: string,
+    snapshots: ReadonlyArray<FxSnapshotWithId>,
+    cfg: FxConfig,
+  ): FxRateConversion {
+    const ttl = cfg.freshnessTtlMinutes;
+    const provider = cfg.preferredProvider;
+    const ids: string[] = [];
+    if (result.method === 'DIRECT') {
+      const s = pickWithId(
+        findFreshestSnapshot(snapshots, provider, source.currency, toCurrency, this.asOf, ttl),
+      );
+      if (s) ids.push(s.id);
+    } else if (result.method === 'INVERSE') {
+      const s = pickWithId(
+        findFreshestSnapshot(snapshots, provider, toCurrency, source.currency, this.asOf, ttl),
+      );
+      if (s) ids.push(s.id);
+    } else {
+      // CROSS_RATE — pivot→source and pivot→target legs.
+      const pivot = result.pivotCurrency ?? cfg.pivotCurrency;
+      const fromS = pickWithId(
+        findFreshestSnapshot(snapshots, provider, pivot, source.currency, this.asOf, ttl),
+      );
+      const toS = pickWithId(
+        findFreshestSnapshot(snapshots, provider, pivot, toCurrency, this.asOf, ttl),
+      );
+      if (fromS) ids.push(fromS.id);
+      if (toS) ids.push(toS.id);
+    }
+    return {
+      converted: true,
+      displayAmount: result.displayAmount,
+      appliedRate: result.appliedRate,
+      provider: result.provider,
+      observedAt: result.observedAt,
+      method: result.method,
+      ...(result.pivotCurrency !== undefined ? { pivotCurrency: result.pivotCurrency } : {}),
+      snapshotIds: ids,
+    };
+  }
+}
+
+/**
+ * `findFreshestSnapshot` returns `FxSnapshot | undefined`. We pass
+ * `FxSnapshotWithId[]` in, so the runtime object DOES carry `id` —
+ * this helper just narrows the static type without copying.
+ */
+function pickWithId(
+  snap: FxSnapshot | undefined,
+): FxSnapshotWithId | undefined {
+  return snap as FxSnapshotWithId | undefined;
 }
 
 /**
@@ -119,6 +261,33 @@ export class FxRateService {
       toCurrency,
       ecbSnapshots,
       asOf,
+      this.ecbConfig,
+    );
+  }
+
+  /**
+   * Pre-fetch OXR + ECB snapshots in two parallel queries and return a
+   * `BatchConverter` for in-memory per-rate conversion. Use when a
+   * single request needs to convert many rates (e.g. a search response).
+   */
+  async loadConverter(asOf: Date = new Date()): Promise<BatchConverter> {
+    const [oxr, ecb] = await Promise.all([
+      this.repository.findFreshSnapshots(
+        'OXR',
+        asOf,
+        this.oxrConfig.freshnessTtlMinutes,
+      ),
+      this.repository.findFreshSnapshots(
+        'ECB',
+        asOf,
+        this.ecbConfig.freshnessTtlMinutes,
+      ),
+    ]);
+    return new BatchConverter(
+      oxr,
+      ecb,
+      asOf,
+      this.oxrConfig,
       this.ecbConfig,
     );
   }

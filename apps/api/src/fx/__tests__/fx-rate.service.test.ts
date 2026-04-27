@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FxSnapshot } from '@bb/fx';
-import { FxRateService } from '../fx-rate.service';
-import type { FxRateSnapshotRepository } from '../fx-rate-snapshot.repository';
+import { BatchConverter, FxRateService } from '../fx-rate.service';
+import type {
+  FxRateSnapshotRepository,
+  FxSnapshotWithId,
+} from '../fx-rate-snapshot.repository';
 
 /**
  * Pure unit tests for FxRateService — repository is mocked, no DB, no
@@ -12,6 +15,18 @@ import type { FxRateSnapshotRepository } from '../fx-rate-snapshot.repository';
 const NOW = new Date('2025-04-27T14:00:00Z');
 const FRESH_OXR = '2025-04-27T13:30:00Z'; // 30m before NOW (within 60m TTL)
 const FRESH_ECB = '2025-04-27T00:00:00Z'; // ~14h before NOW (within 1440m TTL)
+
+const OXR_CFG = {
+  freshnessTtlMinutes: 60,
+  pivotCurrency: 'USD',
+  preferredProvider: 'OXR',
+} as const;
+
+const ECB_CFG = {
+  freshnessTtlMinutes: 1440,
+  pivotCurrency: 'EUR',
+  preferredProvider: 'ECB',
+} as const;
 
 function makeRepoMock(
   byProvider: Partial<Record<'OXR' | 'ECB', FxSnapshot[]>> = {},
@@ -163,6 +178,127 @@ describe('FxRateService', () => {
     );
     expect(result).toEqual({ converted: false, reason: 'NO_RATE' });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('loadConverter pre-fetches both providers in parallel and returns a BatchConverter', async () => {
+    const fetch = vi.fn(async (provider: string) => {
+      if (provider === 'OXR') {
+        return [
+          {
+            id: 'snap-oxr-1',
+            provider: 'OXR',
+            baseCurrency: 'USD',
+            quoteCurrency: 'EUR',
+            rate: '0.92000000',
+            observedAt: FRESH_OXR,
+          },
+        ];
+      }
+      return [
+        {
+          id: 'snap-ecb-1',
+          provider: 'ECB',
+          baseCurrency: 'EUR',
+          quoteCurrency: 'GBP',
+          rate: '0.86100000',
+          observedAt: FRESH_ECB,
+        },
+      ];
+    });
+    const repo = { findFreshSnapshots: fetch } as unknown as FxRateSnapshotRepository;
+    const service = new FxRateService(repo);
+
+    const converter = await service.loadConverter(NOW);
+    expect(converter).toBeInstanceOf(BatchConverter);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    // Subsequent .convert calls hit memory only — no further DB reads.
+    const usdToEur = converter.convert(
+      { amount: '100.00', currency: 'USD' },
+      'EUR',
+    );
+    expect(usdToEur.converted).toBe(true);
+    if (usdToEur.converted) {
+      expect(usdToEur.method).toBe('DIRECT');
+      expect(usdToEur.provider).toBe('OXR');
+      expect(usdToEur.snapshotIds).toEqual(['snap-oxr-1']);
+    }
+    expect(fetch).toHaveBeenCalledTimes(2); // unchanged
+  });
+
+  it('BatchConverter returns SAME_CURRENCY for identical source and target', () => {
+    const c = new BatchConverter([], [], NOW, OXR_CFG, ECB_CFG);
+    const r = c.convert({ amount: '5', currency: 'USD' }, 'USD');
+    expect(r).toEqual({ converted: false, reason: 'SAME_CURRENCY' });
+  });
+
+  it('BatchConverter attaches the underlying snapshot id for INVERSE conversions', () => {
+    const oxr: FxSnapshotWithId[] = [
+      {
+        id: 'snap-usd-eur',
+        provider: 'OXR',
+        baseCurrency: 'USD',
+        quoteCurrency: 'EUR',
+        rate: '0.92000000',
+        observedAt: FRESH_OXR,
+      },
+    ];
+    const c = new BatchConverter(oxr, [], NOW, OXR_CFG, ECB_CFG);
+    const r = c.convert({ amount: '100.00', currency: 'EUR' }, 'USD');
+    expect(r.converted).toBe(true);
+    if (r.converted) {
+      expect(r.method).toBe('INVERSE');
+      expect(r.snapshotIds).toEqual(['snap-usd-eur']);
+    }
+  });
+
+  it('BatchConverter returns both pivot snapshot ids for CROSS_RATE conversions', () => {
+    const oxr: FxSnapshotWithId[] = [
+      {
+        id: 'snap-usd-eur',
+        provider: 'OXR',
+        baseCurrency: 'USD',
+        quoteCurrency: 'EUR',
+        rate: '0.92000000',
+        observedAt: FRESH_OXR,
+      },
+      {
+        id: 'snap-usd-gbp',
+        provider: 'OXR',
+        baseCurrency: 'USD',
+        quoteCurrency: 'GBP',
+        rate: '0.78000000',
+        observedAt: FRESH_OXR,
+      },
+    ];
+    const c = new BatchConverter(oxr, [], NOW, OXR_CFG, ECB_CFG);
+    const r = c.convert({ amount: '100.00', currency: 'EUR' }, 'GBP');
+    expect(r.converted).toBe(true);
+    if (r.converted) {
+      expect(r.method).toBe('CROSS_RATE');
+      expect(r.pivotCurrency).toBe('USD');
+      expect([...r.snapshotIds].sort()).toEqual(['snap-usd-eur', 'snap-usd-gbp']);
+    }
+  });
+
+  it('BatchConverter falls back to ECB when OXR has no fresh snapshot', () => {
+    const ecb: FxSnapshotWithId[] = [
+      {
+        id: 'snap-ecb',
+        provider: 'ECB',
+        baseCurrency: 'EUR',
+        quoteCurrency: 'USD',
+        rate: '1.08500000',
+        observedAt: FRESH_ECB,
+      },
+    ];
+    const c = new BatchConverter([], ecb, NOW, OXR_CFG, ECB_CFG);
+    const r = c.convert({ amount: '100.00', currency: 'EUR' }, 'USD');
+    expect(r.converted).toBe(true);
+    if (r.converted) {
+      expect(r.provider).toBe('ECB');
+      expect(r.snapshotIds).toEqual(['snap-ecb']);
+    }
   });
 
   it('does not consult ECB when OXR returns a non-converted result for the wrong reason — but does when NO_RATE', async () => {

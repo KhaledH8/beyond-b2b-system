@@ -152,6 +152,15 @@ export interface SearchRequest {
   readonly checkOut: string;
   readonly occupancy: SearchOccupancy;
   readonly currency?: CurrencyCode;
+  /**
+   * Optional display currency for the response (ADR-024 C4). When set,
+   * each rate that is not already in `displayCurrency` is converted via
+   * the platform FX layer (OXR → ECB fallback) and the result is
+   * attached as `SearchResultRate.displayPrice`. The source-currency
+   * `priceQuote.sellingPrice` is the truth of what we sell at — display
+   * is for presentation only and is never written to a `LedgerEntry`.
+   */
+  readonly displayCurrency?: CurrencyCode;
 }
 
 export type PromotionKind = 'PROMOTED' | 'RECOMMENDED' | 'FEATURED';
@@ -212,6 +221,36 @@ export interface SearchResultRate {
    * Sourced offers do not carry this field in Phase B.
    */
   readonly cancellation?: CancellationPolicyDescriptor;
+  /**
+   * Display-only conversion of `priceQuote.sellingPrice` into the
+   * caller-requested `SearchRequest.displayCurrency` (ADR-024 C4).
+   * Absent when:
+   *   - the request did not specify `displayCurrency`
+   *   - the source currency already matches `displayCurrency`
+   *   - no fresh OXR or ECB snapshot covered the pair (degraded path)
+   *
+   * `priceQuote.sellingPrice` remains the source-currency truth. Never
+   * settle, ledger-record, or price-derive from this field.
+   */
+  readonly displayPrice?: DisplayPriceApplied;
+}
+
+/**
+ * Per-rate FX outcome (ADR-024 C4). Mirrors the shape of `applyFx`
+ * from `@bb/fx` so the response is self-describing without forcing the
+ * consumer to depend on `@bb/fx`. `pivotCurrency` is populated only
+ * for `CROSS_RATE` conversions; `observedAt` is the limiting (oldest)
+ * input observation timestamp.
+ */
+export interface DisplayPriceApplied {
+  readonly amount: Money;
+  /** Effective conversion rate as 8-decimal string (1 source = N target). */
+  readonly rate: string;
+  /** `'OXR' | 'ECB'` today; `string` to leave room for future feeds. */
+  readonly provider: string;
+  readonly method: 'DIRECT' | 'INVERSE' | 'CROSS_RATE';
+  readonly observedAt: string;
+  readonly pivotCurrency?: string;
 }
 
 export interface SearchResultHotel {
@@ -245,6 +284,40 @@ export interface SearchResponseMeta {
    */
   readonly currencies: ReadonlyArray<CurrencyCode>;
   readonly resultCount: number;
+  /**
+   * FX provenance for the response (ADR-024 C4). Present iff the
+   * request specified `displayCurrency`. Honest about partial and
+   * degraded states — see the `status` and `providers` fields rather
+   * than assuming a single provider applied to every rate.
+   */
+  readonly fxApplication?: SearchResponseFxApplication;
+}
+
+/**
+ * Mixed/degraded-aware FX metadata for a search response (ADR-024 C4).
+ *
+ *   APPLIED   = every rate that needed conversion got a `displayPrice`.
+ *   PARTIAL   = some rates got a `displayPrice`, some did not — the
+ *               consumer must inspect each rate before assuming uniform
+ *               display in `requestedDisplayCurrency`.
+ *   DEGRADED  = no rate got a `displayPrice`. The response degrades to
+ *               existing source-currency behavior; consumers should
+ *               render source-currency prices.
+ *
+ * Same-currency rates (where source already equals
+ * `requestedDisplayCurrency`) are excluded from `ratesNeedingConversion`
+ * so they do not skew the status — there is nothing to convert.
+ *
+ * `providers` lists every provider actually consulted across rates in
+ * this response. Length > 1 means OXR succeeded for some pairs and ECB
+ * fallback fired for others — common during an OXR sync gap.
+ */
+export interface SearchResponseFxApplication {
+  readonly requestedDisplayCurrency: CurrencyCode;
+  readonly status: 'APPLIED' | 'PARTIAL' | 'DEGRADED';
+  readonly providers: ReadonlyArray<string>;
+  readonly ratesNeedingConversion: number;
+  readonly ratesConverted: number;
 }
 
 export interface SearchResponse {

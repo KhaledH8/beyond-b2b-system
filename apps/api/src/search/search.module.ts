@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { AdaptersModule } from '../adapters/adapters.module';
+import { FxModule } from '../fx/fx.module';
 import { PgAccountRepository } from './account.repository';
 import { PgHotelSupplierRepository } from './hotel-supplier.repository';
 import { PgMarkupRuleRepository } from './markup-rule.repository';
@@ -24,7 +25,7 @@ import { SearchService } from './search.service';
  * / payment modules are deliberately not imported.
  */
 @Module({
-  imports: [DatabaseModule, AdaptersModule],
+  imports: [DatabaseModule, AdaptersModule, FxModule],
   controllers: [SearchController],
   providers: [
     PgAccountRepository,

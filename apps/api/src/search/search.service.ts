@@ -6,6 +6,7 @@ import type {
   PromotionTag,
   SearchRequest,
   SearchResponse,
+  SearchResponseFxApplication,
   SearchResultHotel,
   SearchResultRate,
 } from '@bb/domain';
@@ -16,6 +17,8 @@ import {
   ProvisionalMoneyMovementError,
   assertRateBookable,
 } from '../booking/booking-guard';
+import { FxRateService } from '../fx/fx-rate.service';
+import { FxApplicationRepository } from '../fx/fx-application.repository';
 import { PgAccountRepository } from './account.repository';
 import { PgHotelSupplierRepository } from './hotel-supplier.repository';
 import { PgMarkupRuleRepository } from './markup-rule.repository';
@@ -25,6 +28,7 @@ import {
   AuthoredSearchService,
   type PricedAuthoredEntry,
 } from './authored-search.service';
+import { buildDisplayFx } from './display-fx';
 
 /**
  * Channel-aware search orchestrator.
@@ -82,6 +86,10 @@ export class SearchService {
     private readonly authoredRepo: PgAuthoredSearchRepository,
     @Inject(AuthoredSearchService)
     private readonly authoredService: AuthoredSearchService,
+    @Inject(FxRateService)
+    private readonly fxService: FxRateService,
+    @Inject(FxApplicationRepository)
+    private readonly fxApplications: FxApplicationRepository,
   ) {}
 
   async search(req: SearchRequest): Promise<SearchResponse> {
@@ -237,7 +245,7 @@ export class SearchService {
     // Step 7 — merge, group, attach promotions, sort.
     const merged: PricedEntry[] = [...sourcedPriced, ...authoredEntries];
     const grouped = groupByHotel(merged);
-    const results: SearchResultHotel[] = grouped.map((g) => {
+    let results: SearchResultHotel[] = grouped.map((g) => {
       const promo: PromotionTag | undefined = g.supplierHotelId
         ? promotionsByHotelId.get(g.supplierHotelId)
         : undefined;
@@ -252,22 +260,51 @@ export class SearchService {
       };
     });
 
+    // Step 8 — display FX (ADR-024 C4). Skipped entirely when the
+    // request did not specify `displayCurrency` so the legacy B7
+    // response is byte-identical to before this slice landed.
+    let fxApplication: SearchResponseFxApplication | undefined;
+    const searchId = newUlid();
+    if (req.displayCurrency) {
+      const converter = await this.fxService.loadConverter(now);
+      const outcome = buildDisplayFx({
+        results,
+        displayCurrency: req.displayCurrency,
+        searchId,
+        converter,
+      });
+      // Re-sort within each hotel now that displayPrice is in play —
+      // the initial within-hotel sort in groupByHotel ran before FX,
+      // so redo it once with the FX-aware comparator.
+      results = outcome.results.map((hotel) => ({
+        ...hotel,
+        rates: [...hotel.rates].sort(compareRatesAsc),
+      }));
+      fxApplication = outcome.meta;
+      if (outcome.applications.length > 0) {
+        await this.fxApplications.recordBatch(outcome.applications);
+      }
+    }
+
     // Sort hotels by their cheapest selling price ascending. Hotels with
     // zero rates (impossible today but defensive) sort last. When hotels
     // have rates in different currencies, the alphabetical-currency sort
     // from compareSellingPriceAsc provides a deterministic ordering
-    // without requiring FX conversion.
+    // without requiring FX conversion. When every cheapest rate has a
+    // displayPrice in the same currency, that sort uses displayPrice
+    // (ADR-024 C4); otherwise it stays on selling price.
     // Promotion tags do NOT influence this ordering.
     results.sort(compareHotelsByPrice);
 
     return {
       meta: {
-        searchId: newUlid(),
+        searchId,
         generatedAt: new Date().toISOString(),
         accountContext: ctx,
         currency: req.currency ?? allRates[0]?.grossAmount.currency ?? 'USD',
         currencies: collectCurrencies(results),
         resultCount: results.length,
+        ...(fxApplication !== undefined ? { fxApplication } : {}),
       },
       results,
     };
@@ -436,20 +473,37 @@ function compareSellingPriceAsc(
   return am < bm ? -1 : am > bm ? 1 : 0;
 }
 
+/**
+ * FX-aware rate comparator (ADR-024 C4). Uses `displayPrice` when both
+ * rates have one in the same currency; otherwise falls back to source-
+ * currency selling-price comparison with the existing alphabetical
+ * tie-break. The pairwise check guarantees the comparator stays
+ * transitive — a partially-converted set degrades pairs as needed
+ * rather than producing inconsistent orderings.
+ */
+function compareRatesAsc(a: SearchResultRate, b: SearchResultRate): number {
+  const ad = a.displayPrice;
+  const bd = b.displayPrice;
+  if (ad && bd && ad.amount.currency === bd.amount.currency) {
+    return compareSellingPriceAsc(ad.amount, bd.amount);
+  }
+  return compareSellingPriceAsc(
+    a.priceQuote.sellingPrice,
+    b.priceQuote.sellingPrice,
+  );
+}
+
 function compareHotelsByPrice(
   a: SearchResultHotel,
   b: SearchResultHotel,
 ): number {
-  // rates[0] is the cheapest after groupByHotel's within-hotel sort.
+  // rates[0] is the cheapest after the within-hotel sort.
   const aRate = a.rates[0];
   const bRate = b.rates[0];
   if (!aRate && !bRate) return 0;
   if (!aRate) return 1;
   if (!bRate) return -1;
-  return compareSellingPriceAsc(
-    aRate.priceQuote.sellingPrice,
-    bRate.priceQuote.sellingPrice,
-  );
+  return compareRatesAsc(aRate, bRate);
 }
 
 function collectCurrencies(

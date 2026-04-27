@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
 import { FxRateSnapshotRepository } from './fx-rate-snapshot.repository';
+import { FxApplicationRepository } from './fx-application.repository';
 import { EcbFetcherService } from './ecb-fetcher.service';
 import { OxrClient, loadOxrConfig } from './oxr-client';
 import { OxrSyncService } from './oxr-sync.service';
@@ -14,6 +15,7 @@ import { FxController } from './fx.controller';
   providers: [
     InternalAuthGuard,
     FxRateSnapshotRepository,
+    FxApplicationRepository,
     EcbFetcherService,
     OxrSyncService,
     FxRateService,
@@ -22,6 +24,6 @@ import { FxController } from './fx.controller';
       useFactory: (): OxrClient => new OxrClient(loadOxrConfig()),
     },
   ],
-  exports: [FxRateSnapshotRepository, FxRateService],
+  exports: [FxRateSnapshotRepository, FxApplicationRepository, FxRateService],
 })
 export class FxModule {}
