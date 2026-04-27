@@ -4,3 +4,4 @@ export * from './account';
 export * from './supplier';
 export * from './booking';
 export * from './pricing';
+export * from './money';

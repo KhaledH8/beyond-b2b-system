@@ -2,18 +2,17 @@
  * Decimal-string ↔ minor-units helpers for the pricing evaluator.
  *
  * Float math is forbidden on money: every conversion goes through
- * BigInt so percent-of-amount is bit-exact. The two zero-decimal
- * currencies relevant to travel inventory are listed explicitly;
- * anything else is treated as a 2-decimal currency. ADR-020 forbids
- * silent currency assumptions, so the table is small and obvious —
- * adding a currency is a deliberate edit, not a guess.
+ * BigInt so percent-of-amount is bit-exact.
+ *
+ * `minorUnitExponent` (and its zero-decimal-currency table) lives in
+ * `@bb/domain` so `@bb/fx` and other consumers can share it without
+ * pulling in the pricing evaluator. We re-export it here to keep the
+ * existing `@bb/pricing` public API stable.
  */
 
-const ZERO_DECIMAL_CURRENCIES = new Set(['JPY', 'KRW', 'VND', 'ISK']);
+import { minorUnitExponent } from '@bb/domain';
 
-export function minorUnitExponent(currency: string): number {
-  return ZERO_DECIMAL_CURRENCIES.has(currency.toUpperCase()) ? 0 : 2;
-}
+export { minorUnitExponent };
 
 /**
  * Parse a decimal-string amount (e.g. "120.50") into integer minor
