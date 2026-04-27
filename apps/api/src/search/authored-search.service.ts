@@ -3,12 +3,17 @@ import {
   AUTHORED_OFFER_SHAPE,
   evaluateAuthoredOffer,
   evaluateRestrictions,
+  resolveCancellationPolicy,
   toMinorUnits,
   type AuthoredNightLine,
+  type CancellationPolicySnapshot,
   type PriceableAuthoredOffer,
 } from '@bb/pricing';
 import type {
   AccountContext,
+  CancellationFeeType,
+  CancellationPolicyDescriptor,
+  CancellationWindow,
   MarkupRuleSnapshot,
   SearchResultRate,
 } from '@bb/domain';
@@ -45,7 +50,12 @@ import {
  *     pure `evaluateRestrictions`. Offers whose `(contract, season,
  *     rate_plan, room_type, stay)` scope matches a blocking row are
  *     dropped from the candidate set BEFORE pricing per ADR-023 D6.
- *     Cancellation policy resolution (Slice B6) is still deferred.
+ *   - Cancellation policy resolution (ADR-023 Phase B Slice B6):
+ *     `resolveCancellationPolicy` runs per surviving offer; when a
+ *     policy resolves it is attached as a camelCase
+ *     `CancellationPolicyDescriptor` on the `SearchResultRate`. No
+ *     booking-time snapshot pinning yet (CLAUDE.md §11 item 11) —
+ *     that lives in the booking saga in a later phase.
  *
  * Provenance + shape labelling (ADR-021): every emitted
  * `SearchResultRate` carries `offerShape = AUTHORED_PRIMITIVES`,
@@ -133,23 +143,32 @@ export class AuthoredSearchService {
     if (usableContractIds.length === 0) return [];
 
     const seasonIds = Array.from(seasonByContract.values()).map((s) => s.id);
-    const [baseRates, occupancySupplements, restrictions] = await Promise.all([
-      this.repo.findBaseRates(usableContractIds, seasonIds),
-      this.repo.findOccupancySupplements(usableContractIds, seasonIds),
-      this.repo.findActiveRestrictions({
-        tenantId: args.tenantId,
-        supplierIds: uniq(
-          contracts
-            .filter((c) => seasonByContract.has(c.contractId))
-            .map((c) => c.supplierId),
-        ),
-        canonicalHotelIds: canonicalIds,
-        contractIds: usableContractIds,
-        checkIn: args.checkIn,
-        checkOut: args.checkOut,
-        now: args.now,
-      }),
-    ]);
+    const usableSupplierIds = uniq(
+      contracts
+        .filter((c) => seasonByContract.has(c.contractId))
+        .map((c) => c.supplierId),
+    );
+    const [baseRates, occupancySupplements, restrictions, cancellationPolicies] =
+      await Promise.all([
+        this.repo.findBaseRates(usableContractIds, seasonIds),
+        this.repo.findOccupancySupplements(usableContractIds, seasonIds),
+        this.repo.findActiveRestrictions({
+          tenantId: args.tenantId,
+          supplierIds: usableSupplierIds,
+          canonicalHotelIds: canonicalIds,
+          contractIds: usableContractIds,
+          checkIn: args.checkIn,
+          checkOut: args.checkOut,
+          now: args.now,
+        }),
+        this.repo.findActiveCancellationPolicies({
+          tenantId: args.tenantId,
+          supplierIds: usableSupplierIds,
+          canonicalHotelIds: canonicalIds,
+          contractIds: usableContractIds,
+          now: args.now,
+        }),
+      ]);
 
     const supplementsByContractSeason = indexBy(
       occupancySupplements,
@@ -225,6 +244,12 @@ export class AuthoredSearchService {
         const evaluated = evaluateAuthoredOffer(offer, args.rules, args.ctx);
 
         const supplierRateId = `${contract.contractId}:${br.id}`;
+        const cancellation = resolveCancellationPolicy({
+          now: args.now,
+          contractId: contract.contractId,
+          ratePlanId: br.ratePlanId,
+          policies: cancellationPolicies,
+        });
         const result: SearchResultRate = {
           supplierRateId,
           roomType: br.roomTypeName,
@@ -236,6 +261,9 @@ export class AuthoredSearchService {
           offerShape: AUTHORED_OFFER_SHAPE,
           rateBreakdownGranularity: 'AUTHORED_PRIMITIVES',
           supplierRawRef: supplierRateId,
+          ...(cancellation.resolved
+            ? { cancellation: toCancellationDescriptor(cancellation.policy) }
+            : {}),
         };
         const sellMinor = toMinorUnits(
           evaluated.priceQuote.sellingPrice.amount,
@@ -386,6 +414,45 @@ function buildNightLines(
       occupancySupplementMinorUnits: occPerNight,
       mealSupplementMinorUnits: 0n,
     });
+  }
+  return out;
+}
+
+/**
+ * Translate a stored cancellation policy snapshot into the camelCase
+ * descriptor that goes on the search response. The DB stores
+ * `windows_jsonb` in snake_case (matching ADR-023's example); the
+ * response uses camelCase like every other domain shape. Validation
+ * happened at write time (B3 service) so structure is trusted.
+ */
+function toCancellationDescriptor(
+  policy: CancellationPolicySnapshot,
+): CancellationPolicyDescriptor {
+  return {
+    policyVersion: policy.policyVersion,
+    refundable: policy.refundable,
+    windows: policy.windowsJsonb.map(toCancellationWindow),
+  };
+}
+
+function toCancellationWindow(raw: unknown): CancellationWindow {
+  const w = raw as Record<string, unknown>;
+  const fromHoursRaw = w['from_hours_before'];
+  const fromHoursBefore =
+    typeof fromHoursRaw === 'number' ? fromHoursRaw : null;
+  const feeValueRaw = w['fee_value'];
+  const feeValue = typeof feeValueRaw === 'number' ? feeValueRaw : null;
+  const feeCurrencyRaw = w['fee_currency'];
+  const feeCurrency =
+    typeof feeCurrencyRaw === 'string' ? feeCurrencyRaw : null;
+  const out: CancellationWindow = {
+    fromHoursBefore,
+    toHoursBefore: w['to_hours_before'] as number,
+    feeType: w['fee_type'] as CancellationFeeType,
+    feeValue,
+  };
+  if (feeCurrencyRaw !== undefined) {
+    return { ...out, feeCurrency };
   }
   return out;
 }

@@ -22,6 +22,12 @@ export type {
   RestrictionKind,
   RestrictionSnapshot,
 } from './restriction-evaluator';
+export { resolveCancellationPolicy } from './cancellation-resolver';
+export type {
+  CancellationPolicyResolution,
+  CancellationPolicySnapshot,
+  ResolveCancellationPolicyInput,
+} from './cancellation-resolver';
 export {
   applyPercentMarkup,
   fromMinorUnits,

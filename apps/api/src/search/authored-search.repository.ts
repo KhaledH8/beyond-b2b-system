@@ -1,6 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Pool } from '@bb/db';
-import type { RestrictionKind, RestrictionSnapshot } from '@bb/pricing';
+import type {
+  CancellationPolicySnapshot,
+  RestrictionKind,
+  RestrictionSnapshot,
+} from '@bb/pricing';
 import { PG_POOL } from '../database/database.module';
 
 /**
@@ -435,6 +439,79 @@ export class PgAuthoredSearchRepository {
       stayDate: r.stay_date,
       restrictionKind: r.restriction_kind as RestrictionKind,
       params: r.params,
+      effectiveFrom: r.effective_from.toISOString(),
+      effectiveTo: r.effective_to ? r.effective_to.toISOString() : null,
+      supersededById: r.superseded_by_id,
+    }));
+  }
+
+  /**
+   * Active cancellation policies (ADR-023 D5) for the request's
+   * authored scope. Pulls supplier-default rows (`contract_id IS
+   * NULL`) and rows tied to any of the request's active contracts in
+   * one round-trip. Filters at the SQL layer:
+   *
+   *   - `superseded_by_id IS NULL` — the resolver rejects superseded
+   *     rows anyway; pre-filtering keeps the result set small.
+   *   - `effective_from <= now AND (effective_to IS NULL OR
+   *     effective_to >= now)` — same `now` the resolver uses.
+   *
+   * Per-`(contract, rate_plan)` precedence and the highest-version
+   * pick are owned by `resolveCancellationPolicy`; this repository
+   * just delivers the candidate set.
+   */
+  async findActiveCancellationPolicies(args: {
+    readonly tenantId: string;
+    readonly supplierIds: ReadonlyArray<string>;
+    readonly canonicalHotelIds: ReadonlyArray<string>;
+    readonly contractIds: ReadonlyArray<string>;
+    readonly now: Date;
+  }): Promise<ReadonlyArray<CancellationPolicySnapshot>> {
+    if (
+      args.supplierIds.length === 0 ||
+      args.canonicalHotelIds.length === 0
+    ) {
+      return [];
+    }
+    const { rows } = await this.pool.query<{
+      id: string;
+      contract_id: string | null;
+      rate_plan_id: string | null;
+      policy_version: number;
+      windows_jsonb: ReadonlyArray<unknown>;
+      refundable: boolean;
+      effective_from: Date;
+      effective_to: Date | null;
+      superseded_by_id: string | null;
+    }>(
+      `
+      SELECT id, contract_id, rate_plan_id, policy_version,
+             windows_jsonb, refundable,
+             effective_from, effective_to, superseded_by_id
+        FROM rate_auth_cancellation_policy
+       WHERE tenant_id = $1
+         AND supplier_id = ANY($2::char(26)[])
+         AND canonical_hotel_id = ANY($3::char(26)[])
+         AND superseded_by_id IS NULL
+         AND effective_from <= $4::timestamptz
+         AND (effective_to IS NULL OR effective_to >= $4::timestamptz)
+         AND (contract_id IS NULL OR contract_id = ANY($5::char(26)[]))
+      `,
+      [
+        args.tenantId,
+        args.supplierIds as readonly string[],
+        args.canonicalHotelIds as readonly string[],
+        args.now,
+        args.contractIds as readonly string[],
+      ],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      contractId: r.contract_id,
+      ratePlanId: r.rate_plan_id,
+      policyVersion: r.policy_version,
+      windowsJsonb: r.windows_jsonb,
+      refundable: r.refundable,
       effectiveFrom: r.effective_from.toISOString(),
       effectiveTo: r.effective_to ? r.effective_to.toISOString() : null,
       supersededById: r.superseded_by_id,

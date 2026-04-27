@@ -680,6 +680,206 @@ describeIntegration('search controller · authored direct contracts merge', () =
       await pool.query(`DELETE FROM rate_auth_restriction WHERE id = $1`, [newId]);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Slice B6 · cancellation policy resolution + attachment
+  // -------------------------------------------------------------------------
+
+  async function insertCancellationPolicy(args: {
+    contractId: string | null;
+    ratePlanId?: string | null;
+    policyVersion: number;
+    refundable: boolean;
+    windowsJsonb: ReadonlyArray<unknown>;
+    effectiveFrom?: string;
+    effectiveTo?: string | null;
+  }): Promise<string> {
+    const id = newUlid();
+    await pool.query(
+      `INSERT INTO rate_auth_cancellation_policy
+         (id, tenant_id, supplier_id, canonical_hotel_id,
+          rate_plan_id, contract_id,
+          policy_version, windows_jsonb, refundable,
+          effective_from, effective_to)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::timestamptz, $11::timestamptz)`,
+      [
+        id,
+        tenantId,
+        directSupplierId,
+        canonicalHotelId,
+        args.ratePlanId ?? null,
+        args.contractId,
+        args.policyVersion,
+        JSON.stringify(args.windowsJsonb),
+        args.refundable,
+        args.effectiveFrom ?? '2025-01-01T00:00:00Z',
+        args.effectiveTo ?? null,
+      ],
+    );
+    return id;
+  }
+
+  async function deleteCancellationPolicy(id: string): Promise<void> {
+    await pool.query(
+      `DELETE FROM rate_auth_cancellation_policy WHERE id = $1`,
+      [id],
+    );
+  }
+
+  it('attaches a cancellation descriptor to authored offers when an active policy resolves', async () => {
+    const id = await insertCancellationPolicy({
+      contractId,
+      ratePlanId: null, // contract-only tier
+      policyVersion: 1,
+      refundable: true,
+      windowsJsonb: [
+        {
+          from_hours_before: 72,
+          to_hours_before: 0,
+          fee_type: 'PERCENT_OF_TOTAL',
+          fee_value: 100,
+        },
+        {
+          from_hours_before: null,
+          to_hours_before: 72,
+          fee_type: 'FLAT',
+          fee_value: 0,
+          fee_currency: null,
+        },
+      ],
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find(
+        (h) => h.supplierId === directSupplierCode,
+      );
+      expect(authored).toBeDefined();
+      const rate = authored!.rates[0]!;
+      expect(rate.cancellation).toBeDefined();
+      expect(rate.cancellation!.policyVersion).toBe(1);
+      expect(rate.cancellation!.refundable).toBe(true);
+      expect(rate.cancellation!.windows).toHaveLength(2);
+      const first = rate.cancellation!.windows[0]!;
+      expect(first.fromHoursBefore).toBe(72);
+      expect(first.toHoursBefore).toBe(0);
+      expect(first.feeType).toBe('PERCENT_OF_TOTAL');
+      expect(first.feeValue).toBe(100);
+
+      // Sourced offers MUST NOT carry cancellation in Phase B.
+      const sourced = body.results.find((h) => h.supplierId === 'hotelbeds');
+      expect(sourced).toBeDefined();
+      for (const r of sourced!.rates) {
+        expect(r.cancellation).toBeUndefined();
+      }
+    } finally {
+      await deleteCancellationPolicy(id);
+    }
+  });
+
+  it('omits cancellation when no active policy matches the offer', async () => {
+    const body = await searchOnce();
+    const authored = body.results.find(
+      (h) => h.supplierId === directSupplierCode,
+    );
+    expect(authored).toBeDefined();
+    for (const r of authored!.rates) {
+      expect(r.cancellation).toBeUndefined();
+    }
+  });
+
+  it('most-specific-wins: a contract-only policy overrides a higher-version supplier-default policy', async () => {
+    const supplierDefaultId = await insertCancellationPolicy({
+      contractId: null,
+      ratePlanId: null,
+      policyVersion: 99, // would win on version alone
+      refundable: false,
+      windowsJsonb: [
+        {
+          from_hours_before: 24,
+          to_hours_before: 0,
+          fee_type: 'PERCENT_OF_TOTAL',
+          fee_value: 100,
+        },
+      ],
+    });
+    const contractScopedId = await insertCancellationPolicy({
+      contractId,
+      ratePlanId: null,
+      policyVersion: 1,
+      refundable: true,
+      windowsJsonb: [
+        {
+          from_hours_before: 48,
+          to_hours_before: 0,
+          fee_type: 'FLAT',
+          fee_value: 0,
+          fee_currency: null,
+        },
+      ],
+    });
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find(
+        (h) => h.supplierId === directSupplierCode,
+      );
+      expect(authored).toBeDefined();
+      const rate = authored!.rates[0]!;
+      expect(rate.cancellation).toBeDefined();
+      // Tier 2 (contract-only, version 1) wins over tier 4 (supplier-default, version 99).
+      expect(rate.cancellation!.policyVersion).toBe(1);
+      expect(rate.cancellation!.refundable).toBe(true);
+    } finally {
+      await deleteCancellationPolicy(contractScopedId);
+      await deleteCancellationPolicy(supplierDefaultId);
+    }
+  });
+
+  it('skips a superseded cancellation policy', async () => {
+    const newId = newUlid();
+    const oldId = newUlid();
+    await pool.query(
+      `INSERT INTO rate_auth_cancellation_policy
+         (id, tenant_id, supplier_id, canonical_hotel_id,
+          rate_plan_id, contract_id,
+          policy_version, windows_jsonb, refundable,
+          effective_from)
+       VALUES ($1, $2, $3, $4, NULL, $5, 2, '[]'::jsonb, true, '2025-01-01T00:00:00Z'::timestamptz)`,
+      [newId, tenantId, directSupplierId, canonicalHotelId, contractId],
+    );
+    // Superseded policy: high version, but pointed at by superseded_by_id.
+    // The repository pre-filters superseded rows so the resolver never sees it,
+    // and the response should reflect only the unsuperseded `newId`.
+    await pool.query(
+      `INSERT INTO rate_auth_cancellation_policy
+         (id, tenant_id, supplier_id, canonical_hotel_id,
+          rate_plan_id, contract_id,
+          policy_version, windows_jsonb, refundable,
+          effective_from, superseded_by_id)
+       VALUES ($1, $2, $3, $4, NULL, $5, 1, '[{"from_hours_before":24,"to_hours_before":0,"fee_type":"PERCENT_OF_TOTAL","fee_value":100}]'::jsonb, false, '2025-01-01T00:00:00Z'::timestamptz, $6)`,
+      [oldId, tenantId, directSupplierId, canonicalHotelId, contractId, newId],
+    );
+    try {
+      const body = await searchOnce();
+      const authored = body.results.find(
+        (h) => h.supplierId === directSupplierCode,
+      );
+      expect(authored).toBeDefined();
+      const rate = authored!.rates[0]!;
+      expect(rate.cancellation).toBeDefined();
+      expect(rate.cancellation!.policyVersion).toBe(2);
+      expect(rate.cancellation!.refundable).toBe(true);
+      expect(rate.cancellation!.windows).toHaveLength(0);
+    } finally {
+      await pool.query(
+        `DELETE FROM rate_auth_cancellation_policy WHERE id = $1`,
+        [oldId],
+      );
+      await pool.query(
+        `DELETE FROM rate_auth_cancellation_policy WHERE id = $1`,
+        [newId],
+      );
+    }
+  });
 });
 
 async function urlFor(_server: unknown, p: string): Promise<string> {

@@ -161,6 +161,33 @@ export interface PromotionTag {
   readonly priority: number;
 }
 
+export type CancellationFeeType = 'PERCENT_OF_TOTAL' | 'FLAT' | 'FIRST_NIGHT';
+
+export interface CancellationWindow {
+  /** Hours before stay where this window starts. `null` means "any time before the adjacent window" (ADR-023 D5). */
+  readonly fromHoursBefore: number | null;
+  /** Hours before stay where this window ends. */
+  readonly toHoursBefore: number;
+  readonly feeType: CancellationFeeType;
+  /** `null` or `0` means free in this window (ADR-023 D5). */
+  readonly feeValue: number | null;
+  /** Required only for `FLAT`. Optional for the other fee types. */
+  readonly feeCurrency?: string | null;
+}
+
+/**
+ * Cancellation terms attached to an authored search result (ADR-023
+ * Phase B Slice B6). Surfaced for fee-disclosure UI; the booking
+ * saga will pin a separate immutable snapshot at confirmation time
+ * (CLAUDE.md §11 item 11) so this descriptor is intentionally NOT
+ * the audit-of-record copy.
+ */
+export interface CancellationPolicyDescriptor {
+  readonly policyVersion: number;
+  readonly refundable: boolean;
+  readonly windows: ReadonlyArray<CancellationWindow>;
+}
+
 export interface SearchResultRate {
   readonly supplierRateId: string;
   readonly roomType: string;
@@ -177,6 +204,14 @@ export interface SearchResultRate {
   readonly rateBreakdownGranularity: string;
   /** Opaque value the booking saga will pass back to the supplier. */
   readonly supplierRawRef: string;
+  /**
+   * Cancellation terms resolved from `rate_auth_cancellation_policy`
+   * for authored offers (ADR-023 Phase B Slice B6). Absent when no
+   * active policy matches the offer's `(contract, rate_plan)` scope
+   * — the offer is still valid; the consumer renders a default UI.
+   * Sourced offers do not carry this field in Phase B.
+   */
+  readonly cancellation?: CancellationPolicyDescriptor;
 }
 
 export interface SearchResultHotel {
