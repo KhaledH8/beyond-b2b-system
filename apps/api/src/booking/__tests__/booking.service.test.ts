@@ -1,9 +1,10 @@
 import {
   BadRequestException,
   ConflictException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool, PoolClient } from '@bb/db';
 import { BookingService } from '../booking.service';
 import type {
@@ -412,5 +413,220 @@ describe('BookingService.confirm', () => {
       service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
     ).rejects.toThrow(/update failed/);
     expect(pool.clientRelease).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── C5c.4 — Structured confirm-path observability ───────────────────────────
+
+describe('BookingService.confirm — structured logging', () => {
+  let pool: PoolMock;
+  let repo: RepoMock;
+  let resolver: ResolverMock;
+  let lockRepo: LockRepoMock;
+  let service: BookingService;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    pool = makePoolMock();
+    repo = makeRepoMock();
+    resolver = makeResolverMock();
+    lockRepo = makeLockRepoMock();
+    service = new BookingService(
+      pool.pool,
+      repo.repository,
+      resolver.resolver,
+      lockRepo.lockRepository,
+    );
+    logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    errorSpy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('logs CONFIRMED with provider + currencies on a successful Stripe-locked confirm', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    resolver.resolve.mockResolvedValue({
+      kind: 'STRIPE_FX_QUOTE',
+      provider: 'STRIPE',
+      sourceCurrency: 'USD',
+      chargeCurrency: 'GBP',
+      sourceMinor: 10000n,
+      chargeMinor: 7800n,
+      rate: '0.78003120',
+      providerQuoteId: 'fxq_x',
+      expiresAt: '2026-04-28T11:00:00Z',
+    });
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'GBP' });
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evt: 'booking_confirm',
+        outcome: 'CONFIRMED',
+        bookingId: BOOKING_ID,
+        chargeCurrency: 'GBP',
+        sourceCurrency: 'USD',
+        alreadyConfirmed: false,
+        fxOutcomeKind: 'STRIPE_FX_QUOTE',
+        provider: 'STRIPE',
+      }),
+    );
+  });
+
+  it('logs CONFIRMED with NO_LOCK_NEEDED and no provider on same-currency confirm', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' });
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const event = logSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('CONFIRMED');
+    expect(event['fxOutcomeKind']).toBe('NO_LOCK_NEEDED');
+    expect(event['sourceCurrency']).toBe('USD');
+    expect(event['chargeCurrency']).toBe('USD');
+    expect(event['provider']).toBeUndefined();
+  });
+
+  it('logs CONFIRMED with NO_LOCK_AVAILABLE and no provider when resolver degrades', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    resolver.resolve.mockResolvedValue({
+      kind: 'NO_LOCK_AVAILABLE',
+      reason: 'STRIPE_FAILED_AND_NO_OXR_SNAPSHOT',
+    });
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'JPY' });
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const event = logSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('CONFIRMED');
+    expect(event['fxOutcomeKind']).toBe('NO_LOCK_AVAILABLE');
+    expect(event['sourceCurrency']).toBe('USD');
+    expect(event['chargeCurrency']).toBe('JPY');
+    expect(event['provider']).toBeUndefined();
+  });
+
+  it('logs ALREADY_CONFIRMED on the idempotency fast-path with no fxOutcomeKind', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('CONFIRMED'));
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'EUR' });
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const event = logSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('ALREADY_CONFIRMED');
+    expect(event['alreadyConfirmed']).toBe(true);
+    // No FX recomputation on the fast-path — these fields are absent.
+    expect(event['fxOutcomeKind']).toBeUndefined();
+    expect(event['provider']).toBeUndefined();
+    expect(event['sourceCurrency']).toBeUndefined();
+    expect(event['chargeCurrency']).toBe('EUR');
+  });
+
+  it('warns with NOT_FOUND when the booking is missing', async () => {
+    repo.loadById.mockResolvedValue(undefined);
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evt: 'booking_confirm',
+        outcome: 'NOT_FOUND',
+        bookingId: BOOKING_ID,
+        chargeCurrency: 'USD',
+        errorReason: expect.stringMatching(/Booking not found/) as unknown,
+      }),
+    );
+  });
+
+  it('warns with INVALID when chargeCurrency fails format validation', async () => {
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'usd' }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const event = warnSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('INVALID');
+    // Source currency is unknown at this point — no DB load happened.
+    expect(event['sourceCurrency']).toBeUndefined();
+    expect(event['chargeCurrency']).toBe('usd');
+  });
+
+  it('warns with INVALID and surfaces sourceCurrency=null context for unpriced bookings', async () => {
+    repo.loadById.mockResolvedValue(
+      bookingRecord('INITIATED', { sellCurrency: null }),
+    );
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'EUR' }),
+    ).rejects.toThrow(/pricing not pinned/);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const event = warnSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('INVALID');
+    expect(event['errorReason']).toMatch(/pricing not pinned/);
+    expect(event['chargeCurrency']).toBe('EUR');
+    // sourceCurrency is null on the booking; we omit the field rather
+    // than emit `null` so log scrapers don't have to special-case it.
+    expect(event['sourceCurrency']).toBeUndefined();
+  });
+
+  it('warns with CONFLICT when markConfirmed reports a race', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: false });
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toThrow(ConflictException);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const event = warnSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('CONFLICT');
+    expect(event['sourceCurrency']).toBe('USD');
+  });
+
+  it('errors with ERROR when an unexpected throw escapes the transaction', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    const boom = new Error('database is sad');
+    repo.markConfirmed.mockRejectedValue(boom);
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toBe(boom);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const event = errorSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event['outcome']).toBe('ERROR');
+    expect(event['errorReason']).toMatch(/database is sad/);
+  });
+
+  it('emits exactly one event per confirm attempt regardless of outcome', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' });
+
+    const totalCalls =
+      logSpy.mock.calls.length +
+      warnSpy.mock.calls.length +
+      errorSpy.mock.calls.length;
+    expect(totalCalls).toBe(1);
   });
 });
