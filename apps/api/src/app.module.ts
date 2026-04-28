@@ -7,6 +7,7 @@ import { SearchModule } from './search/search.module';
 import { AdminModule } from './admin/admin.module';
 import { DirectContractsModule } from './direct-contracts/direct-contracts.module';
 import { FxModule } from './fx/fx.module';
+import { BookingModule } from './booking/booking.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { FxModule } from './fx/fx.module';
     AdminModule,
     DirectContractsModule,
     FxModule,
+    BookingModule,
   ],
 })
 export class AppModule {}
