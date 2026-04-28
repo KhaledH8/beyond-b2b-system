@@ -7,55 +7,102 @@ import {
 } from '@nestjs/common';
 import type { Pool } from '@bb/db';
 import { PG_POOL } from '../database/database.module';
+import {
+  BookingFxLockResolver,
+  type BookingFxLockDecision,
+} from '../fx/booking-fx-lock.resolver';
+import {
+  BookingFxLockRepository,
+  type BookingFxLockInput,
+} from '../fx/booking-fx-lock.repository';
+import { newUlid } from '../common/ulid';
 import { BookingRepository } from './booking.repository';
 
 export interface ConfirmBookingInput {
   readonly bookingId: string;
   /**
    * 3-letter uppercase ISO 4217 currency code (e.g. 'USD'). The
-   * customer's card-currency.
-   *
-   * Validated in C5c.1 (cheap; rejects bad calls early); **not yet
-   * consumed**. C5c.2 threads this into `BookingFxLockResolver` so
-   * the confirmation transaction can pin a `booking_fx_lock` row
-   * alongside the status flip.
+   * customer's card-currency. Validated and used to drive the
+   * booking-time FX lock decision (ADR-024 C5c.2).
    */
   readonly chargeCurrency: string;
 }
+
+/**
+ * Outcome of the FX-lock decision for one confirm call.
+ *
+ *   NO_LOCK_NEEDED      — source currency equals charge currency;
+ *                         resolver was not consulted; no row written.
+ *   NO_LOCK_AVAILABLE   — Stripe failed AND OXR had no fresh DIRECT
+ *                         or INVERSE snapshot for the pair; no row
+ *                         written; booking confirmed in source
+ *                         currency.
+ *   STRIPE_FX_QUOTE     — Stripe locked the rate; one CONFIRMATION
+ *                         row inserted with provider='STRIPE'.
+ *   SNAPSHOT_REFERENCE  — OXR snapshot used as reference rate; one
+ *                         CONFIRMATION row inserted with
+ *                         provider='OXR'. ECB is never used here.
+ */
+export type ConfirmFxOutcome =
+  | { readonly kind: 'NO_LOCK_NEEDED' }
+  | { readonly kind: 'NO_LOCK_AVAILABLE' }
+  | { readonly kind: 'STRIPE_FX_QUOTE'; readonly provider: 'STRIPE' }
+  | { readonly kind: 'SNAPSHOT_REFERENCE'; readonly provider: 'OXR' };
 
 export interface ConfirmBookingResult {
   readonly bookingId: string;
   /**
    * `true` when this call hit the idempotency fast-path (booking was
-   * already CONFIRMED on entry). `false` when this call performed the
-   * UPDATE that flipped the row from INITIATED / PENDING_PAYMENT to
-   * CONFIRMED.
+   * already CONFIRMED on entry). `false` when this call performed
+   * the UPDATE that flipped the row from INITIATED / PENDING_PAYMENT
+   * to CONFIRMED.
    */
   readonly alreadyConfirmed: boolean;
+  /**
+   * FX-lock outcome for this call. Absent on the `alreadyConfirmed`
+   * fast-path — the lock decision was made by the prior call, not
+   * this one. Callers needing the original lock can read
+   * `booking_fx_lock` directly (slated for C5d).
+   */
+  readonly fxOutcome?: ConfirmFxOutcome;
 }
 
 /**
- * Booking confirmation shell (ADR-024 C5c.1).
+ * Booking confirmation orchestrator (ADR-024 C5c.2).
  *
- * Scope of this slice is intentionally narrow:
- *   - Load the booking by id.
- *   - Validate it is in a confirmable state.
- *   - In one transaction, flip the row to `CONFIRMED`.
- *   - Return an idempotent result on a repeat confirm.
+ * Pipeline (one call to `confirm`):
  *
- * Out of scope for this slice:
- *   - Stripe FX Quote calls (`BookingFxLockResolver`) — C5c.2.
- *   - `booking_fx_lock` writes — C5c.2.
- *   - The four ADR-021 booking-time snapshot tables — separate
- *     ADR-021 implementation slice (those tables do not yet exist).
- *   - Payment-instrument resolution that would supply
- *     `chargeCurrency` automatically — Phase 2.
- *   - A controller endpoint — added when the saga needs an external
- *     trigger; tests in C5c.1 call the service directly.
+ *   PRE-TRANSACTION (network OK, no DB transaction held):
+ *     1. Validate `chargeCurrency` shape.
+ *     2. Load booking by id; refuse on NotFound.
+ *     3. Idempotency fast-path on status = CONFIRMED.
+ *     4. Refuse terminal-state bookings (CANCELLED / FAILED / REFUNDED).
+ *     5. Refuse unpriced bookings (sell_amount_minor_units OR
+ *        sell_currency is null) — locked policy: an unpriced booking
+ *        never reaches the FX-lock path.
+ *     6. If source currency == charge currency, decision is
+ *        NO_LOCK_NEEDED; resolver is NOT consulted.
+ *     7. Otherwise call `BookingFxLockResolver.resolve(...)`.
+ *        Resolver does Stripe → OXR-only fallback. ECB is never
+ *        consulted by construction (locked correction in the C5
+ *        plan; enforced inside the resolver).
  *
- * Source-currency truth is preserved by construction: this slice
- * does not write any FX row, so the ledger / source-currency story
- * is unchanged from before C5c.
+ *   TRANSACTION (one Postgres transaction; pure SQL, no network):
+ *     8. BEGIN.
+ *     9. UPDATE booking_booking SET status='CONFIRMED' (conditional
+ *        on current status). Zero rows means the state changed
+ *        between load and UPDATE — ROLLBACK + Conflict.
+ *    10. If the resolver returned STRIPE_FX_QUOTE or
+ *        SNAPSHOT_REFERENCE, INSERT one CONFIRMATION row into
+ *        booking_fx_lock on the same client. CHECK / FK / unique
+ *        violations roll back the booking status flip too — the
+ *        whole transaction is all-or-nothing.
+ *    11. COMMIT.
+ *
+ * Source-currency truth is preserved: no LedgerEntry is read or
+ * written here. The booking's `sell_amount_minor_units` /
+ * `sell_currency` are the source-currency commitment; the FX lock
+ * is a parallel record of what the customer's card sees.
  */
 @Injectable()
 export class BookingService {
@@ -63,6 +110,10 @@ export class BookingService {
     @Inject(PG_POOL) private readonly pool: Pool,
     @Inject(BookingRepository)
     private readonly repository: BookingRepository,
+    @Inject(BookingFxLockResolver)
+    private readonly resolver: BookingFxLockResolver,
+    @Inject(BookingFxLockRepository)
+    private readonly lockRepository: BookingFxLockRepository,
   ) {}
 
   async confirm(input: ConfirmBookingInput): Promise<ConfirmBookingResult> {
@@ -76,42 +127,77 @@ export class BookingService {
       throw new NotFoundException(`Booking not found: ${input.bookingId}`);
     }
     if (existing.status === 'CONFIRMED') {
-      // Idempotency fast-path: already confirmed by a prior call.
-      // No transaction opened; no further work.
+      // Idempotency fast-path: prior call already drove this booking
+      // to CONFIRMED (and made the FX-lock decision then). No tx, no
+      // resolver, no FX write. Caller distinguishes via
+      // `alreadyConfirmed`.
       return { bookingId: existing.id, alreadyConfirmed: true };
     }
-    if (existing.status !== 'INITIATED' && existing.status !== 'PENDING_PAYMENT') {
-      // Terminal-state guard: refuse to confirm a CANCELLED, FAILED,
-      // or REFUNDED booking. The caller is asking the wrong question.
+    if (
+      existing.status !== 'INITIATED' &&
+      existing.status !== 'PENDING_PAYMENT'
+    ) {
       throw new BadRequestException(
         `Cannot confirm booking ${input.bookingId} in status '${existing.status}'`,
       );
+    }
+    if (
+      existing.sellAmountMinorUnits === null ||
+      existing.sellCurrency === null
+    ) {
+      // Locked policy: an unpriced booking does not silently degrade
+      // to "no lock needed". Pricing must be pinned before
+      // confirmation can resolve an FX commitment.
+      throw new BadRequestException(
+        `Cannot confirm booking ${input.bookingId}: pricing not pinned ` +
+          `(sell_amount_minor_units or sell_currency is null)`,
+      );
+    }
+
+    const sourceCurrency = existing.sellCurrency;
+    const sourceMinor = existing.sellAmountMinorUnits;
+
+    // Pre-transaction: resolver may make outbound HTTP calls. Run
+    // before BEGIN so a slow Stripe response does not extend the
+    // transaction window.
+    let decision: BookingFxLockDecision;
+    if (sourceCurrency === input.chargeCurrency) {
+      decision = { kind: 'NO_LOCK_NEEDED', reason: 'SAME_CURRENCY' };
+    } else {
+      decision = await this.resolver.resolve({
+        sourceCurrency,
+        chargeCurrency: input.chargeCurrency,
+        sourceMinor,
+      });
     }
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await this.repository.markConfirmed(
+      const update = await this.repository.markConfirmed(
         client,
         input.bookingId,
       );
-      if (!result.updated) {
-        // The booking changed state between our load and our UPDATE
-        // (concurrent confirm or cancel). Roll back the empty
-        // transaction and surface a Conflict so the caller can decide
-        // whether to retry or treat as final.
+      if (!update.updated) {
         await client.query('ROLLBACK');
         throw new ConflictException(
           `Booking ${input.bookingId} state changed during confirm; retry`,
         );
       }
+      if (
+        decision.kind === 'STRIPE_FX_QUOTE' ||
+        decision.kind === 'SNAPSHOT_REFERENCE'
+      ) {
+        const lockInput = decisionToLockInput(decision, input.bookingId);
+        await this.lockRepository.insert(client, lockInput);
+      }
       await client.query('COMMIT');
-      return { bookingId: input.bookingId, alreadyConfirmed: false };
+      return {
+        bookingId: input.bookingId,
+        alreadyConfirmed: false,
+        fxOutcome: decisionToOutcome(decision),
+      };
     } catch (err) {
-      // Best-effort rollback. The earlier explicit ROLLBACK on the
-      // not-updated path may have already closed the transaction; a
-      // second ROLLBACK is a no-op error we tolerate so we do not
-      // mask the original exception.
       await client.query('ROLLBACK').catch(() => undefined);
       throw err;
     } finally {
@@ -126,4 +212,48 @@ function validateChargeCurrency(value: string): void {
       `chargeCurrency must be a 3-letter uppercase ISO 4217 code, got "${value}"`,
     );
   }
+}
+
+function decisionToOutcome(
+  decision: BookingFxLockDecision,
+): ConfirmFxOutcome {
+  switch (decision.kind) {
+    case 'NO_LOCK_NEEDED':
+      return { kind: 'NO_LOCK_NEEDED' };
+    case 'NO_LOCK_AVAILABLE':
+      return { kind: 'NO_LOCK_AVAILABLE' };
+    case 'STRIPE_FX_QUOTE':
+      return { kind: 'STRIPE_FX_QUOTE', provider: 'STRIPE' };
+    case 'SNAPSHOT_REFERENCE':
+      return { kind: 'SNAPSHOT_REFERENCE', provider: 'OXR' };
+  }
+}
+
+function decisionToLockInput(
+  decision: Extract<
+    BookingFxLockDecision,
+    { kind: 'STRIPE_FX_QUOTE' | 'SNAPSHOT_REFERENCE' }
+  >,
+  bookingId: string,
+): BookingFxLockInput {
+  const base = {
+    id: newUlid(),
+    bookingId,
+    appliedKind: 'CONFIRMATION' as const,
+    lockKind: decision.kind,
+    sourceCurrency: decision.sourceCurrency,
+    chargeCurrency: decision.chargeCurrency,
+    rate: decision.rate,
+    sourceMinor: decision.sourceMinor,
+    chargeMinor: decision.chargeMinor,
+    provider: decision.provider,
+  };
+  if (decision.kind === 'STRIPE_FX_QUOTE') {
+    return {
+      ...base,
+      providerQuoteId: decision.providerQuoteId,
+      expiresAt: decision.expiresAt,
+    };
+  }
+  return { ...base, rateSnapshotId: decision.rateSnapshotId };
 }

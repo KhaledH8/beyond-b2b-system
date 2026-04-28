@@ -1,11 +1,15 @@
-import { Inject, Injectable } from '@nestjs/common';
-import type { Pool } from '@bb/db';
-import { PG_POOL } from '../database/database.module';
+import { Injectable } from '@nestjs/common';
+import type { Queryable } from '../database/queryable';
 
 /**
  * Single-row append-only writer for `booking_fx_lock` (ADR-024 C5a).
  * No reads in C5b — the refund/cancellation lookup that derives later
  * rows from the original CONFIRMATION row lands in C5d.
+ *
+ * Takes a `Queryable` per call (ADR-024 C5c locked design choice) so
+ * the same write can be issued either through `pool` for one-shot
+ * audit inserts, or through a checked-out client mid-transaction
+ * (e.g. the booking-saga confirmation path in C5c.2).
  *
  * The schema's coherence CHECK enforces the per-lock-kind shape; this
  * repository's job is to translate our typed input into the row,
@@ -44,18 +48,20 @@ export interface BookingFxLockInput {
 
 @Injectable()
 export class BookingFxLockRepository {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
-
   /**
-   * Inserts one row. Returns the inserted id.
+   * Inserts one row using the supplied `Queryable`. Pass `pool` for a
+   * stand-alone insert; pass a checked-out client to participate in
+   * an open transaction (the C5c.2 confirmation path).
    *
    * Idempotency for `applied_kind = 'CONFIRMATION'` is enforced by
    * the partial unique index `booking_fx_lock_confirmation_uq`; a
    * second CONFIRMATION row for the same booking_id surfaces as a
-   * Postgres `unique_violation` (SQLSTATE 23505). Saga retry logic
-   * (C5c) interprets that as "already confirmed."
+   * Postgres `unique_violation` (SQLSTATE 23505).
    */
-  async insert(input: BookingFxLockInput): Promise<{ id: string }> {
+  async insert(
+    q: Queryable,
+    input: BookingFxLockInput,
+  ): Promise<{ id: string }> {
     const sql = `
       INSERT INTO booking_fx_lock (
         id, booking_id, applied_kind, lock_kind,
@@ -86,7 +92,7 @@ export class BookingFxLockRepository {
       input.rateSnapshotId ?? null,
       input.expiresAt ?? null,
     ];
-    const { rows } = await this.pool.query<{ id: string }>(sql, values);
+    const { rows } = await q.query<{ id: string }>(sql, values);
     return { id: rows[0]!.id };
   }
 }

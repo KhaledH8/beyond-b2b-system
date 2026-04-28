@@ -1,21 +1,23 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
+import { FxModule } from '../fx/fx.module';
 import { BookingRepository } from './booking.repository';
 import { BookingService } from './booking.service';
 
 /**
- * Booking module shell (ADR-024 C5c.1).
+ * Booking module (ADR-024 C5c.2).
  *
- * Exports `BookingService` so future slices (C5c.2 onward) can inject
- * it from outside the module — though no external caller wires it
- * today. No controller is registered: this slice is service-only.
+ * Imports `FxModule` to consume `BookingFxLockResolver` (Stripe
+ * → OXR-only fallback decision tree) and `BookingFxLockRepository`
+ * (single-row writer for `booking_fx_lock`). Both are exported by
+ * `FxModule`; this module wires them into `BookingService.confirm`.
  *
- * `FxModule` is intentionally NOT imported yet. C5c.2 will add it
- * when `BookingFxLockResolver` and `BookingFxLockRepository` start
- * being called inside the confirmation transaction.
+ * No controller is registered yet — confirmation is service-only,
+ * exercised through tests. A controller endpoint lands in C5c.3
+ * when an external trigger is needed.
  */
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, FxModule],
   providers: [BookingRepository, BookingService],
   exports: [BookingService],
 })

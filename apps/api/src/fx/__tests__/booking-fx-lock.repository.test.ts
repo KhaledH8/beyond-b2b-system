@@ -32,7 +32,7 @@ describeIntegration('BookingFxLockRepository', () => {
 
   beforeAll(() => {
     pool = new Pool({ connectionString: process.env['DATABASE_URL']! });
-    repository = new BookingFxLockRepository(pool);
+    repository = new BookingFxLockRepository();
   });
 
   afterAll(async () => {
@@ -109,7 +109,7 @@ describeIntegration('BookingFxLockRepository', () => {
       expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     };
 
-    const { id } = await repository.insert(input);
+    const { id } = await repository.insert(pool, input);
     expect(id).toBe(input.id);
 
     const { rows } = await pool.query<{
@@ -143,7 +143,7 @@ describeIntegration('BookingFxLockRepository', () => {
       rateSnapshotId: snapshotId,
     };
 
-    const { id } = await repository.insert(input);
+    const { id } = await repository.insert(pool, input);
     const { rows } = await pool.query<{ rate_snapshot_id: string }>(
       `SELECT rate_snapshot_id FROM booking_fx_lock WHERE id = $1`,
       [id],
@@ -154,7 +154,7 @@ describeIntegration('BookingFxLockRepository', () => {
   it('rejects a second CONFIRMATION row for the same booking via the partial unique index', async () => {
     const bookingId = await seedBooking();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    await repository.insert({
+    await repository.insert(pool, {
       id: newUlid(),
       bookingId,
       appliedKind: 'CONFIRMATION',
@@ -170,7 +170,7 @@ describeIntegration('BookingFxLockRepository', () => {
     });
 
     await expect(
-      repository.insert({
+      repository.insert(pool, {
         id: newUlid(),
         bookingId,
         appliedKind: 'CONFIRMATION',
@@ -203,14 +203,14 @@ describeIntegration('BookingFxLockRepository', () => {
       provider: 'OXR',
       rateSnapshotId: snapshotId,
     });
-    await repository.insert(make());
-    await expect(repository.insert(make())).resolves.toBeDefined();
+    await repository.insert(pool, make());
+    await expect(repository.insert(pool, make())).resolves.toBeDefined();
   });
 
   it('rejects a STRIPE_FX_QUOTE row missing expires_at via coherence CHECK', async () => {
     const bookingId = await seedBooking();
     await expect(
-      repository.insert({
+      repository.insert(pool, {
         id: newUlid(),
         bookingId,
         appliedKind: 'CONFIRMATION',
@@ -230,7 +230,7 @@ describeIntegration('BookingFxLockRepository', () => {
   it('rejects a SNAPSHOT_REFERENCE row missing rate_snapshot_id via coherence CHECK', async () => {
     const bookingId = await seedBooking();
     await expect(
-      repository.insert({
+      repository.insert(pool, {
         id: newUlid(),
         bookingId,
         appliedKind: 'CONFIRMATION',
