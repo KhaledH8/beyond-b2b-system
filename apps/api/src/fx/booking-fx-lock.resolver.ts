@@ -4,6 +4,7 @@ import {
   type StripeFxQuoteResponse,
 } from './stripe-fx-quote.client';
 import { FxRateService } from './fx-rate.service';
+import { applyRateToMinor } from './booking-fx-rate-math';
 
 /**
  * Resolves a booking-time FX lock decision (ADR-024 C5).
@@ -175,42 +176,3 @@ function buildStripeDecision(args: {
   };
 }
 
-/**
- * Multiplies a minor-unit `bigint` by an 8-decimal rate string and
- * rounds half-away-from-zero to a whole minor unit.
- *
- * Implementation rationale: the rate is at most 8 decimals; we scale
- * to integer arithmetic (rate × 10^8) and use BigInt division so we
- * never lose precision on large amounts. Float multiplication would
- * be acceptable here in isolation (booking amounts fit comfortably in
- * Number's safe-integer range) but the bigint path is cheap and keeps
- * the audit reconstructible to the last unit.
- */
-function applyRateToMinor(sourceMinor: bigint, rate: string): bigint {
-  const scale = 100_000_000n; // 10^8
-  const rateScaled = parseRateToScaledBigInt(rate);
-  // chargeMinor = round(sourceMinor × rate) where rate is fraction
-  // (rateScaled / 10^8). Half-away-from-zero rounding via:
-  //   floor((|x| × 2 + denominator) / (denominator × 2)) × sign
-  const numerator = sourceMinor * rateScaled;
-  return roundHalfAwayFromZero(numerator, scale);
-}
-
-function parseRateToScaledBigInt(rate: string): bigint {
-  if (!/^-?\d+(\.\d{1,8})?$/.test(rate)) {
-    throw new Error(`Invalid rate "${rate}": expected up to 8 decimal places`);
-  }
-  const negative = rate.startsWith('-');
-  const abs = negative ? rate.slice(1) : rate;
-  const [whole = '0', fractionRaw = ''] = abs.split('.');
-  const fraction = (fractionRaw + '00000000').slice(0, 8);
-  const scaled = BigInt(whole + fraction);
-  return negative ? -scaled : scaled;
-}
-
-function roundHalfAwayFromZero(numerator: bigint, denominator: bigint): bigint {
-  const negative = numerator < 0n;
-  const abs = negative ? -numerator : numerator;
-  const halfUp = (abs * 2n + denominator) / (denominator * 2n);
-  return negative ? -halfUp : halfUp;
-}

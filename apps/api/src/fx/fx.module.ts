@@ -14,6 +14,7 @@ import {
 } from './stripe-fx-quote.client';
 import { BookingFxLockRepository } from './booking-fx-lock.repository';
 import { BookingFxLockResolver } from './booking-fx-lock.resolver';
+import { BookingFxLockApplier } from './booking-fx-lock.applier';
 
 @Module({
   imports: [DatabaseModule],
@@ -27,6 +28,7 @@ import { BookingFxLockResolver } from './booking-fx-lock.resolver';
     OxrSyncService,
     FxRateService,
     BookingFxLockResolver,
+    BookingFxLockApplier,
     {
       provide: OxrClient,
       useFactory: (): OxrClient => new OxrClient(loadOxrConfig()),
@@ -43,6 +45,7 @@ import { BookingFxLockResolver } from './booking-fx-lock.resolver';
     FxRateService,
     BookingFxLockRepository,
     BookingFxLockResolver,
+    BookingFxLockApplier,
   ],
 })
 export class FxModule {}
