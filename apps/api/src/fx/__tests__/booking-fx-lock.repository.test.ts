@@ -245,4 +245,161 @@ describeIntegration('BookingFxLockRepository', () => {
       }),
     ).rejects.toMatchObject({ code: '23514' }); // check_violation
   });
+
+  // ─── findConfirmation (C5d.1) ─────────────────────────────────────────────
+
+  describe('findConfirmation', () => {
+    it('returns undefined when no rows exist for the booking', async () => {
+      const bookingId = await seedBooking();
+      const found = await repository.findConfirmation(pool, bookingId);
+      expect(found).toBeUndefined();
+    });
+
+    it('returns undefined when the booking has only a REFUND row (no CONFIRMATION)', async () => {
+      const bookingId = await seedBooking();
+      const snapshotId = await seedOxrSnapshot();
+      await repository.insert(pool, {
+        id: newUlid(),
+        bookingId,
+        appliedKind: 'REFUND',
+        lockKind: 'SNAPSHOT_REFERENCE',
+        sourceCurrency: 'USD',
+        chargeCurrency: 'GBP',
+        rate: '0.78000000',
+        sourceMinor: 5000n,
+        chargeMinor: 3900n,
+        provider: 'OXR',
+        rateSnapshotId: snapshotId,
+      });
+      const found = await repository.findConfirmation(pool, bookingId);
+      expect(found).toBeUndefined();
+    });
+
+    it('returns the STRIPE_FX_QUOTE confirmation row with all fields mapped', async () => {
+      const bookingId = await seedBooking();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const insertedId = newUlid();
+      await repository.insert(pool, {
+        id: insertedId,
+        bookingId,
+        appliedKind: 'CONFIRMATION',
+        lockKind: 'STRIPE_FX_QUOTE',
+        sourceCurrency: 'USD',
+        chargeCurrency: 'GBP',
+        rate: '0.78003120',
+        sourceMinor: 10000n,
+        chargeMinor: 7800n,
+        provider: 'STRIPE',
+        providerQuoteId: 'fxq_test_findconf',
+        expiresAt,
+      });
+
+      const found = await repository.findConfirmation(pool, bookingId);
+      expect(found).toBeDefined();
+      expect(found!.id).toBe(insertedId);
+      expect(found!.bookingId).toBe(bookingId);
+      expect(found!.appliedKind).toBe('CONFIRMATION');
+      expect(found!.lockKind).toBe('STRIPE_FX_QUOTE');
+      expect(found!.sourceCurrency).toBe('USD');
+      expect(found!.chargeCurrency).toBe('GBP');
+      expect(found!.rate).toBe('0.78003120');
+      expect(found!.sourceMinor).toBe(10000n);
+      expect(found!.chargeMinor).toBe(7800n);
+      expect(found!.provider).toBe('STRIPE');
+      expect(found!.providerQuoteId).toBe('fxq_test_findconf');
+      expect(found!.rateSnapshotId).toBeNull();
+      expect(found!.expiresAt).toBe(expiresAt);
+      expect(found!.appliedAt).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
+      );
+    });
+
+    it('returns the SNAPSHOT_REFERENCE confirmation row with rate_snapshot_id populated and expiresAt null', async () => {
+      const bookingId = await seedBooking();
+      const snapshotId = await seedOxrSnapshot();
+      await repository.insert(pool, {
+        id: newUlid(),
+        bookingId,
+        appliedKind: 'CONFIRMATION',
+        lockKind: 'SNAPSHOT_REFERENCE',
+        sourceCurrency: 'USD',
+        chargeCurrency: 'GBP',
+        rate: '0.78000000',
+        sourceMinor: 10000n,
+        chargeMinor: 7800n,
+        provider: 'OXR',
+        rateSnapshotId: snapshotId,
+      });
+
+      const found = await repository.findConfirmation(pool, bookingId);
+      expect(found).toBeDefined();
+      expect(found!.lockKind).toBe('SNAPSHOT_REFERENCE');
+      expect(found!.provider).toBe('OXR');
+      expect(found!.rateSnapshotId).toBe(snapshotId);
+      expect(found!.providerQuoteId).toBeNull();
+      expect(found!.expiresAt).toBeNull();
+    });
+
+    it('isolates lookups by booking_id', async () => {
+      const bookingA = await seedBooking();
+      const bookingB = await seedBooking();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await repository.insert(pool, {
+        id: newUlid(),
+        bookingId: bookingA,
+        appliedKind: 'CONFIRMATION',
+        lockKind: 'STRIPE_FX_QUOTE',
+        sourceCurrency: 'USD',
+        chargeCurrency: 'GBP',
+        rate: '0.78003120',
+        sourceMinor: 10000n,
+        chargeMinor: 7800n,
+        provider: 'STRIPE',
+        providerQuoteId: 'fxq_iso_a',
+        expiresAt,
+      });
+
+      const foundA = await repository.findConfirmation(pool, bookingA);
+      const foundB = await repository.findConfirmation(pool, bookingB);
+      expect(foundA?.bookingId).toBe(bookingA);
+      expect(foundB).toBeUndefined();
+    });
+
+    it('returns the CONFIRMATION row when REFUND rows also exist (predicate scopes to applied_kind)', async () => {
+      const bookingId = await seedBooking();
+      const snapshotId = await seedOxrSnapshot();
+      const confirmationId = newUlid();
+      await repository.insert(pool, {
+        id: confirmationId,
+        bookingId,
+        appliedKind: 'CONFIRMATION',
+        lockKind: 'SNAPSHOT_REFERENCE',
+        sourceCurrency: 'USD',
+        chargeCurrency: 'GBP',
+        rate: '0.78000000',
+        sourceMinor: 10000n,
+        chargeMinor: 7800n,
+        provider: 'OXR',
+        rateSnapshotId: snapshotId,
+      });
+      await repository.insert(pool, {
+        id: newUlid(),
+        bookingId,
+        appliedKind: 'REFUND',
+        lockKind: 'SNAPSHOT_REFERENCE',
+        sourceCurrency: 'USD',
+        chargeCurrency: 'GBP',
+        rate: '0.78000000',
+        sourceMinor: 5000n,
+        chargeMinor: 3900n,
+        provider: 'OXR',
+        rateSnapshotId: snapshotId,
+      });
+
+      const found = await repository.findConfirmation(pool, bookingId);
+      expect(found).toBeDefined();
+      expect(found!.id).toBe(confirmationId);
+      expect(found!.appliedKind).toBe('CONFIRMATION');
+    });
+  });
 });
