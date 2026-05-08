@@ -1,6 +1,6 @@
 # ADR-024: FX strategy — search/display conversion, reference rates, and locked checkout FX
 
-- **Status:** Proposed (provisional — decision-pending skeleton; provisional defaults locked, no code yet)
+- **Status:** Accepted — partially implemented (C1–C5d.2 shipped 2026-04-28; C5d.3 / C5d.4 / C6 / C7 pending; D4 and D7 reconciled with shipped schema 2026-04-28, D11 added)
 - **Date:** 2026-04-27
 - **Supersedes:** nothing
 - **Amends:** nothing (additive layer; pricing engine and ledger semantics unchanged)
@@ -22,10 +22,13 @@ sorting hardening slice.
 
 This ADR records the three-tier FX strategy the project will use to close
 the B7 gap, plus the supporting data model, audit posture, and tenancy
-posture. **It does NOT introduce code.** Implementation lands in a
-subsequent set of slices (see "Implementation order" below). The intent is
-to lock the architecture decisions now so that, when implementation begins,
-no further architectural debate is required.
+posture. The intent was to lock the architecture decisions before
+implementation began.
+
+**Implementation status (2026-04-28):** Implementation is underway and
+complete through C5d.2. The original "no code yet" framing applied at
+draft time; it is preserved above for historical accuracy. See D10 and
+the "Implementation order" section below for the current delivery status.
 
 The system has three distinct FX concerns that prior implementations in
 similar projects often conflate. Keeping them apart is load-bearing:
@@ -106,26 +109,62 @@ Pulling ECB independently means the project has an FX baseline even if
 OXR is never paid for, which keeps the audit story intact during early
 operational phases.
 
-### D4. Tier 3 — Stripe FX Quotes for locked checkout FX
+### D4. Tier 3 — Locked checkout FX
 
-At booking confirmation, when the booking's settlement currency differs
-from the supplier source currency, the booking saga (ADR-010) requests a
-Stripe FX Quote bound to the payment intent for that booking. The Quote
-is persisted in `booking_fx_lock` (schema below) and is the sole rate the
-customer's card is charged at. Tier-1 and tier-2 rates are NOT
-authoritative once a Quote has been pinned.
+*Amended 2026-04-28 to reflect shipped implementation.*
 
-Stripe FX Quote semantics: the Quote is valid for a window (typically
-minutes); the booking saga must capture (or void) within that window. If
-the Quote expires, the saga refreshes it before capture. The booking
-record records which Quote was active at capture-success time.
+At booking confirmation, when the booking's source currency differs
+from its charge currency, `BookingFxLockResolver` resolves a locked
+rate via the following decision tree:
 
-If Stripe Connect/Treasury constraints later block FX Quotes for a given
-jurisdiction (e.g. UAE settlement; CLAUDE.md §10 flags "Stripe Treasury
-is not assumed for UAE"), tier 3 is replaced by an alternative
-locked-rate path documented in a follow-up ADR. The booking saga keeps a
-single contract with the FX layer (`pinFxLock(booking)` returning a
-provider-tagged record); the swap is internal to that layer.
+1. `source_currency == charge_currency` → `NO_LOCK_NEEDED`. No row is
+   written; booking confirms in source currency.
+2. Stripe FX Quote succeeds → `STRIPE_FX_QUOTE` lock. Stripe quote id
+   and TTL are persisted in `booking_fx_lock`.
+3. Stripe fails (any error) AND OXR has a fresh DIRECT or INVERSE
+   snapshot for the pair → `SNAPSHOT_REFERENCE` lock with
+   `provider = 'OXR'`. `fx_rate_snapshot.id` is persisted as the
+   auditable trace.
+4. Both fail (or Stripe fails and OXR has only a CROSS_RATE) →
+   `NO_LOCK_AVAILABLE`. No row is written; the saga confirms in source
+   currency. CROSS_RATE is excluded because `booking_fx_lock` is
+   single-snapshot per row and a two-leg conversion cannot be honestly
+   attributed to one snapshot.
+
+**Two distinct lock kinds can be the authoritative charge-time rate:**
+a Stripe FX Quote *or* an OXR-only snapshot reference. Either
+satisfies the "rate the customer's card settles at" contract; the
+provider-tagged shape is recorded on the row.
+
+ECB is intentionally absent from booking-time lock at three independent
+layers: (1) the `booking_fx_lock_provider_chk` CHECK allows only
+`('STRIPE', 'OXR')`; (2) `FxRateService.loadOxrOnlyConverter` is called
+in the fallback path and passes an empty ECB array; (3) resolver unit
+tests assert the OXR-only converter is loaded.
+
+**Stripe FX Quote lifecycle.** `booking_fx_lock` is a write-once
+record of *which rate the saga committed to at confirmation time*, not
+a mutable state machine. There is no `status`, no `captured_at`, and
+no PENDING→CAPTURED transition. The Quote's `lock_expires_at` is
+recorded as a historical attribute, not a live constraint enforced
+after the row is written. If the Quote expires before confirmation,
+the resolver does not "refresh" — the next confirmation attempt
+re-resolves from scratch and allocates a new quote id. Capture-time
+outcome (did Stripe actually settle at the quoted rate?) is observed
+via the PaymentIntent record and Stripe webhooks; correlating that
+back to `booking_fx_lock` is an open item (see Open items).
+
+**Refund / cancellation-fee lifecycle.** A booking accumulates further
+`booking_fx_lock` rows over its lifetime — one `REFUND` or
+`CANCELLATION_FEE` row per such event, derived deterministically from
+the booking's `CONFIRMATION` row. See D11.
+
+**Jurisdictional escape hatch.** If Stripe FX Quotes become unavailable
+or non-compliant in a jurisdiction (CLAUDE.md §10 flags "Stripe
+Treasury is not assumed for UAE"; FX Quotes ride on Stripe Payments
+not Treasury, but the constraint is recorded), the `lock_kind` enum
+can be extended — with a deliberate edit to the coherence CHECK — for
+a third provider, without changing the resolver's contract.
 
 ### D5. Server-side display conversion at search response
 
@@ -211,27 +250,58 @@ fx_application (
 a sliding TTL (provisional default 30 days; see Open items). BOOKING_DISPLAY
 applications are retained for the booking's full retention lifetime.
 
+*Amended 2026-04-28 to reflect shipped C5a schema.*
+
 ```
 booking_fx_lock (
-  id                CHAR(26)     PK
-  booking_id        CHAR(26)     NOT NULL  FK → booking
-  provider          VARCHAR(16)  NOT NULL  -- 'STRIPE_FX_QUOTE' (today)
-  provider_quote_ref VARCHAR(128) NOT NULL  -- e.g. Stripe Quote id
-  source_currency   CHAR(3)      NOT NULL
-  settlement_currency CHAR(3)    NOT NULL
-  rate              NUMERIC(18,8) NOT NULL
-  quoted_at         TIMESTAMPTZ  NOT NULL
-  expires_at        TIMESTAMPTZ  NOT NULL
-  captured_at       TIMESTAMPTZ            -- null until capture-success binds
-  status            VARCHAR(16)  NOT NULL  -- 'PENDING' | 'CAPTURED' | 'EXPIRED' | 'VOIDED'
-  raw_payload_ref   VARCHAR(256)
+  id                CHAR(26)      PK
+  booking_id        CHAR(26)      NOT NULL  FK → booking_booking
+  applied_kind      VARCHAR(16)   NOT NULL  -- 'CONFIRMATION' | 'REFUND' | 'CANCELLATION_FEE'
+  lock_kind         VARCHAR(32)   NOT NULL  -- 'STRIPE_FX_QUOTE' | 'SNAPSHOT_REFERENCE'
+  source_currency   CHAR(3)       NOT NULL
+  charge_currency   CHAR(3)       NOT NULL  CHECK (charge_currency <> source_currency)
+  rate              NUMERIC(18,8) NOT NULL  CHECK (rate > 0)   -- 1 source = N charge
+  source_minor      BIGINT        NOT NULL  CHECK (>= 0)
+  charge_minor      BIGINT        NOT NULL  CHECK (>= 0)
+  provider          VARCHAR(16)   NOT NULL  -- 'STRIPE' | 'OXR'  (ECB intentionally absent)
+  provider_quote_id VARCHAR(64)             -- NOT NULL when lock_kind='STRIPE_FX_QUOTE', else NULL
+  rate_snapshot_id  CHAR(26)      FK → fx_rate_snapshot
+                                            -- NOT NULL when lock_kind='SNAPSHOT_REFERENCE', else NULL
+  expires_at        TIMESTAMPTZ             -- NOT NULL when lock_kind='STRIPE_FX_QUOTE', else NULL
+  applied_at        TIMESTAMPTZ   NOT NULL DEFAULT now()
+
+  -- Single CHECK ties (lock_kind, provider, *_id, expires_at) into
+  -- one of two valid shapes. Adding a third lock kind requires
+  -- editing this CHECK deliberately — silent drift is impossible.
+  CHECK (
+    (lock_kind='STRIPE_FX_QUOTE'    AND provider='STRIPE' AND provider_quote_id IS NOT NULL
+       AND rate_snapshot_id IS NULL    AND expires_at IS NOT NULL)
+    OR
+    (lock_kind='SNAPSHOT_REFERENCE' AND provider='OXR'    AND provider_quote_id IS NULL
+       AND rate_snapshot_id IS NOT NULL AND expires_at IS NULL)
+  )
 )
+
+-- Schema-level idempotency for the confirmation transaction.
+-- A retry that re-issues the confirm INSERT fails with a
+-- unique_violation, which the saga interprets as "already confirmed."
+CREATE UNIQUE INDEX booking_fx_lock_confirmation_uq
+ON booking_fx_lock (booking_id) WHERE applied_kind='CONFIRMATION';
 ```
 
-`booking_fx_lock` is part of the booking-confirmation transaction. A
-capture-success message updates `captured_at` and `status`; expiry/void
-follow the same status field. This row is immutable except for those
-status transitions; never amended in place.
+`booking_fx_lock` is **append-only and per-row immutable**. A booking
+accumulates one `CONFIRMATION` row at confirm time and zero-or-more
+`REFUND` / `CANCELLATION_FEE` rows over its lifetime; rows are never
+mutated. There is no `status` field and no `captured_at` field — the
+row records what the saga committed to write, not what later happened
+on the wire. Capture outcome is observed via `PaymentIntent` + Stripe
+webhooks, not by updating this row. No Stripe `raw_payload_ref` is
+stored: the Stripe quote id is the canonical reference, and dual-
+writing Stripe response bodies per booking would be material storage
+cost for low audit value.
+
+The canonical schema definition lives in the migration
+`infra/migrations/fx/20260503000001_booking_fx_lock.ts`.
 
 ```
 fx_provider_credentials (
@@ -279,12 +349,64 @@ Booking saga depends on a separate `pinFxLock({ bookingId, ... })`
 contract on the same module; the FX module owns the Stripe Quote round
 trip and the `booking_fx_lock` write.
 
-### D10. No code yet — implementation deferred to subsequent slices
+### D10. Implementation status
 
-This ADR is locked at the architecture/data-model level. No source files,
-migrations, or modules are added by accepting this ADR. The implementation
-order is recorded under "Implementation order" below; each slice will
-have its own brief and acceptance criteria.
+This ADR was originally locked at the architecture/data-model level with no
+code. As of 2026-04-28, slices C1 through C5d.2 are shipped:
+
+- **C1** (schema migration: `fx_rate_snapshot`, `fx_application`, `booking_fx_lock`) — done
+- **C2** (ECB daily snapshot fetcher: `EcbFetcherService`, cron-driven) — done
+- **C3** (OXR client + `FxRateService` with ECB fallback, `packages/fx` pure logic) — done
+- **C4** (server-side display conversion in search: `displayCurrency`, `displayPrice` per rate, `fxApplication` meta) — done
+- **C5a** (`booking_fx_lock` schema with `lock_kind`, `applied_kind`, coherence CHECK, partial unique index) — done
+- **C5b** (Stripe FX Quote client, `BookingFxLockRepository.insert`, `BookingFxLockResolver`) — done
+- **C5c.1–4** (booking module shell, confirm transaction wiring, internal `POST /internal/bookings/:id/confirm`, structured observability) — done
+- **C5d.1** (`BookingFxLockRepository.findConfirmation`) — done
+- **C5d.2** (shared rate-math, `deriveRefundLockInput`, `BookingFxLockApplier.applyRefund`) — done
+
+Pending: **C5d.3** (refund saga wiring), **C5d.4** (refund observability),
+**C6** (full refund/cancel path), **C7** (recognized-margin currency policy).
+
+D4 and D7 were reconciled with the shipped schema on 2026-04-28 (see
+amendment notes inline in those sections, plus D11).
+
+### D11. `applied_kind` history model and copy-forward refund design
+
+*Added 2026-04-28.*
+
+`booking_fx_lock` is the booking's **full FX history**, not just the
+confirmation pin. The `applied_kind` column distinguishes
+`CONFIRMATION` (one per booking, enforced by partial unique index) from
+`REFUND` / `CANCELLATION_FEE` (zero-or-more, unconstrained).
+
+The locked rule for refund and cancellation-fee FX is **copy-forward
+from CONFIRMATION, never re-quote**. `BookingFxLockApplier.applyRefund`:
+
+1. Reads the booking's unique `CONFIRMATION` row via
+   `BookingFxLockRepository.findConfirmation`.
+2. If absent → returns `NO_CONFIRMATION_LOCK` and writes no row. (The
+   booking confirmed in source currency or via `NO_LOCK_AVAILABLE`;
+   there is no FX context to copy forward. Refunds in that case post
+   to the ledger in source currency only.)
+3. If present → derives a `BookingFxLockInput` whose `rate`,
+   `lock_kind`, `provider`, and provider-specific id (`provider_quote_id`
+   or `rate_snapshot_id`) are copied verbatim, and whose `charge_minor`
+   is `round(refund_source_minor × confirmation.rate)` using the same
+   `applyRateToMinor` half-away-from-zero BigInt rounding as the
+   resolver (shared in `apps/api/src/fx/booking-fx-rate-math.ts`).
+   Writes via `BookingFxLockRepository.insert`.
+
+The applier depends only on the repository — no Stripe client, no
+`FxRateService`, no fresh spot rate. This makes booking economics
+reversible at a fixed rate over the booking's lifetime, which is the
+whole point of the lock.
+
+**Why one table rather than a separate `booking_fx_refund` table:** the
+history of FX events on a booking is naturally one append-only ledger.
+Splitting it would force every reconciliation query to UNION two
+tables and would lose the schema-level guarantee that REFUND rows
+match CONFIRMATION's `lock_kind` / `provider` shape — the same
+coherence CHECK applies row-wise regardless of `applied_kind`.
 
 ## Consequences
 
@@ -301,8 +423,8 @@ have its own brief and acceptance criteria.
   transaction.
 - Refund handling (cancellation flows): the locked rate from
   `booking_fx_lock` is the rate at which refunds settle, not a fresh
-  rate. This avoids double-FX exposure but is flagged as an open item
-  for legal/finance review.
+  rate (see D11). This avoids double-FX exposure. Per-jurisdiction
+  legal confirmation of the locked-rate policy remains an open item.
 - Operational dependency on three external sources (OXR, ECB, Stripe).
   ECB is free and high-availability; OXR has a paid SLA; Stripe is
   already a dependency. Net new operational risk is small.
@@ -324,10 +446,12 @@ cover them. Each must be answered before its corresponding slice ships.
 - **Display-currency selection rules.** Three plausible sources for the
   display currency: (a) `req.displayCurrency` if present; (b) account
   default if set; (c) tenant default. Resolution order is not yet locked.
-- **Failure mode when both OXR and ECB are unusable.** Two options:
-  (i) degrade to B7 mixed-currency response (no conversion, alphabetical
-  sort, `meta.fxFallback='NONE'`); (ii) refuse the search with a 503.
-  Recommendation is (i) for resilience; needs explicit confirmation.
+- ~~**Failure mode when both OXR and ECB are unusable.**~~ **RESOLVED (C3/C4, 2026-04-28):**
+  Option (i) — degrade to B7 mixed-currency response (no conversion,
+  source-currency amounts, no `displayPrice` fields). `FxRateService`
+  returns a `NOT_CONVERTED` result; search assembler omits `displayPrice`.
+  Booking path: `NO_LOCK_AVAILABLE`, booking confirms in source currency
+  with no `booking_fx_lock` row written.
 - **Currency pairs with no ECB cross-rate.** ECB publishes EUR-base
   rates; deriving e.g. AED→THB via two hops introduces compounded error.
   Whether the project supports such pairs in v1, and via which provider,
@@ -337,10 +461,16 @@ cover them. Each must be answered before its corresponding slice ships.
   source currency is the only meaningful number; this ADR assumes it
   stays in source currency. Confirmation from rewards/finance owner
   needed before slice C5.
-- **Refund / cancellation FX.** Provisional default: refund settles at
-  the `booking_fx_lock` rate, not at a fresh rate. Legal and finance
-  must confirm this matches consumer-protection requirements per
-  jurisdiction (UAE explicit; EU implicit).
+- ~~**Refund / cancellation FX.**~~ **RESOLVED (C5d plan + C5d.1–C5d.2, 2026-04-28):**
+  Confirmed: refund/cancellation-fee rows copy forward the CONFIRMATION
+  row's locked rate. `BookingFxLockApplier.applyRefund` applies
+  `derived_charge_minor = round(refund_source_minor × confirmation.rate)`
+  using the same half-away-from-zero rounding as the confirmation path.
+  No fresh spot rate is ever fetched for a refund or cancellation fee.
+  Legal/finance confirmation of the locked-rate policy per jurisdiction
+  (UAE explicit; EU implicit) remains open — the implementation
+  enforces the locked-rate default; a jurisdiction override would
+  require a follow-up ADR amendment.
 - **Stripe Treasury / Connect compatibility.** CLAUDE.md §10 flags
   "Stripe Treasury is not assumed for UAE." Stripe FX Quotes ride on
   Stripe Payments, not Treasury, so this ADR does not assume Treasury.
@@ -354,35 +484,55 @@ cover them. Each must be answered before its corresponding slice ships.
   multiple suppliers in different source currencies, does the cart
   total live in display currency, source currency per leg, or both?
   Out of v1 scope but flagged so this ADR is not contradicted later.
+- **`booking_fx_lock` capture-outcome correlation.** The shipped table
+  records the rate the saga committed to at confirmation time, not the
+  capture-time outcome. There is no link from `booking_fx_lock` to the
+  PaymentIntent / Stripe webhook that confirms the customer's card
+  actually settled at that rate. If a locked Stripe Quote expires or
+  settles at a different rate, the discrepancy is not observable from
+  this table alone. Resolution options: (a) add a `capture_event_id`
+  correlation column joining the future PaymentIntent record;
+  (b) leave correlation to the saga + observability layer with
+  documented join paths. Decision deferred to the slice that wires
+  PaymentIntent capture.
 
-## Implementation order (post-ADR slices)
+## Implementation order
 
-These are the slices that implement this ADR. Each is its own brief; do
-not start any of them without explicit authorization.
+Slices marked **[done]** are shipped as of 2026-04-28. Slices marked
+**[pending]** require explicit authorization before starting.
 
-- **Slice C1 — FX schema migration only.** Adds the four tables in D7.
-  No service code, no clients. Migrations + DB constraints only.
-- **Slice C2 — ECB daily snapshot fetcher.** Cron-driven job that pulls
-  ECB reference rates and writes `fx_rate_snapshot` rows. Pure write
-  path; no consumer yet.
-- **Slice C3 — OXR client + cache + ECB fallback.** The `packages/fx`
-  module's pure rate-lookup + fallback logic, plus the Nest-side OXR
-  client. No search integration yet.
-- **Slice C4 — Server-side display conversion in search response.**
-  Wires C3 into the search service. Adds `req.displayCurrency`,
-  per-rate converted amounts, `meta.fxApplication`. Existing single-
-  currency / no-conversion responses unchanged when `displayCurrency`
-  is omitted.
-- **Slice C5 — Stripe FX Quote pinning at booking confirmation.**
-  Adds the booking saga's call to `pinFxLock`, writes `booking_fx_lock`
-  in the confirmation transaction. Coordinates with the deferred
-  booking-time cancellation snapshot work (CLAUDE.md §11 item 11) —
-  both pinning operations land together in one slice if scope allows,
-  or as adjacent slices.
-- **Slice C6 — Refund/cancel FX behavior.** Implements the chosen
-  policy from the open-items list (default: settle at the locked rate).
-  Touches the cancellation/refund path only.
-- **Slice C7 — Recognized-margin currency policy under FX.** Confirms
-  and locks the recognized-margin currency invariant in the rewards
-  module, with explicit tests. Scope: documentation + tests, ideally
-  no behavior change.
+- **[done] Slice C1 — FX schema migration.** `fx_rate_snapshot`,
+  `fx_application`, initial `booking_fx_lock` tables.
+- **[done] Slice C2 — ECB daily snapshot fetcher.** `EcbFetcherService`
+  cron job writing `fx_rate_snapshot` rows.
+- **[done] Slice C3 — OXR client + FxRateService + ECB fallback.**
+  `packages/fx` pure logic, `OxrClient`, `FxRateService` with two-tier
+  fallback. Includes C3a (hoisted `minorUnitExponent` to `@bb/domain`)
+  and C3b (OXR HTTP client + `FxRateService`).
+- **[done] Slice C4 — Server-side display conversion in search response.**
+  `displayCurrency` request input, `displayPrice` per rate, `fxApplication`
+  meta, FX-aware sort, `fx_application` audit rows (DIRECT/INVERSE only;
+  CROSS_RATE gap documented).
+- **[done] Slice C5 — Booking-time FX lock (decomposed into sub-slices):**
+  - **[done] C5a** — `booking_fx_lock` schema: `lock_kind`, `applied_kind`,
+    coherence CHECK, partial unique index.
+  - **[done] C5b** — Stripe FX Quote client, `BookingFxLockRepository.insert`,
+    `BookingFxLockResolver` (Stripe → OXR-only fallback decision tree).
+  - **[done] C5c.1** — booking module shell, `Queryable` interface.
+  - **[done] C5c.2** — booking confirm transaction wiring
+    (`BookingService.confirm`).
+  - **[done] C5c.3** — internal `POST /internal/bookings/:id/confirm`
+    endpoint + `InternalAuthGuard`.
+  - **[done] C5c.4** — structured observability logging on the confirm path.
+  - **[done] C5d.1** — `BookingFxLockRepository.findConfirmation`.
+  - **[done] C5d.2** — shared `booking-fx-rate-math`, `deriveRefundLockInput`,
+    `BookingFxLockApplier.applyRefund`.
+  - **[pending] C5d.3** — refund saga wiring (no refund saga exists yet).
+  - **[pending] C5d.4** — refund-path observability (mirror C5c.4 pattern).
+- **[pending] Slice C6 — Full refund/cancel FX path end-to-end.** Wires
+  C5d.3/C5d.4 into the cancellation/refund saga. Depends on Phase 2
+  refund saga existing.
+- **[pending] Slice C7 — Recognized-margin currency policy under FX.**
+  Confirms and locks the recognized-margin currency invariant in the rewards
+  module, with explicit tests. Scope: documentation + tests, ideally no
+  behavior change.
