@@ -5,13 +5,52 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { Test } from '@nestjs/testing';
-import type { INestApplication } from '@nestjs/common';
+import type { CanActivate, ExecutionContext, INestApplication } from '@nestjs/common';
 import type { SearchResponse } from '@bb/domain';
 import { newUlid } from '../../common/ulid';
 import { AdaptersModule } from '../../adapters/adapters.module';
 import { DatabaseModule } from '../../database/database.module';
 import { ObjectStorageModule } from '../../object-storage/object-storage.module';
 import { SearchModule } from '../search.module';
+import { JwtAuthGuard } from '../../auth/jwt/jwt-auth.guard';
+import { RolesGuard } from '../../auth/permissions/roles.guard';
+import { AUTH_CONTEXT_KEY } from '../../auth/auth-context';
+
+/**
+ * The `/search` endpoint is gated by `JwtAuthGuard + RolesGuard` since
+ * ADR-026 Slice E4-A and reconciles `body.tenantId` / `body.accountId`
+ * against `AuthContext` since E4-B. These are business-logic tests
+ * that don't aim to exercise auth — auth behavior is pinned in
+ * `search.controller.guards.test.ts` (guard pipeline) and
+ * `search.controller.reconciliation.test.ts` (body-vs-AuthContext
+ * rules).
+ *
+ * The `JwtAuthGuard` stand-in below echoes the body's `tenantId` and
+ * `accountId` into a synthetic AGENCY `AuthContext` so the
+ * controller's E4-B reconciliation step finds matching values and
+ * lets the request through. The pass-through `RolesGuard` then
+ * permits the route.
+ */
+const echoBodyAuthGuard: CanActivate = {
+  canActivate: (ctx: ExecutionContext): boolean => {
+    const req = ctx.switchToHttp().getRequest<{
+      body?: { tenantId?: string; accountId?: string };
+    }>();
+    const body = req.body ?? {};
+    (req as unknown as Record<symbol, unknown>)[AUTH_CONTEXT_KEY] = {
+      auth0Sub: 'test|stub',
+      userId: 'test-user-id',
+      tenantId: body.tenantId ?? '',
+      accountId: body.accountId ?? '',
+      userClass: 'AGENCY',
+    };
+    return true;
+  },
+};
+
+const passThroughGuard: CanActivate = {
+  canActivate: (_ctx: ExecutionContext) => true,
+};
 
 /**
  * Integration test for the channel-aware search seam.
@@ -99,7 +138,12 @@ describeIntegration('search controller · channel-aware pricing (fixture mode)',
     // (which FKs into hotel_supplier).
     const moduleRef = await Test.createTestingModule({
       imports: [DatabaseModule, ObjectStorageModule, AdaptersModule, SearchModule],
-    }).compile();
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue(echoBodyAuthGuard)
+      .overrideGuard(RolesGuard)
+      .useValue(passThroughGuard)
+      .compile();
     app = moduleRef.createNestApplication();
     await app.init();
 
@@ -309,7 +353,12 @@ describeIntegration('search controller · authored direct contracts merge', () =
 
     const moduleRef = await Test.createTestingModule({
       imports: [DatabaseModule, ObjectStorageModule, AdaptersModule, SearchModule],
-    }).compile();
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue(echoBodyAuthGuard)
+      .overrideGuard(RolesGuard)
+      .useValue(passThroughGuard)
+      .compile();
     app = moduleRef.createNestApplication();
     await app.init();
 

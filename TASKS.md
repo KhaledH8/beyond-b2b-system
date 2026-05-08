@@ -10,6 +10,97 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-026 Slice E4-B** — body-vs-AuthContext reconciliation
+      for `/search`. Closes the main remaining risk before treating
+      `/search` as secure for shared use. Locked V1 rule:
+      `tenantId` and `accountId` are derived from `AuthContext`,
+      never trusted from the body. AGENCY users: if the body
+      provides either field, it must equal the AuthContext value;
+      mismatch → 403, omit → derived. Body fields are now optional.
+      OPERATOR users (including `platform_admin`, which holds
+      `SEARCH_EXECUTE` per the locked D8 rule): 403 with policy
+      message `"Operator search requires impersonation; not
+      supported in V1 (ADR-026 E8)"` — operators have no
+      `accountId`, search is account-scoped, and the impersonation
+      flow (E8) is the right path. Failure mode is uniformly 403,
+      never 400, because foreign-accountId-in-well-formed-body is
+      an authorization concern. `parseRequest` refactored into
+      `parseSearchBody` returning optional `bodyTenantId` /
+      `bodyAccountId`; the handler injects `@Auth() auth` and
+      composes the typed `SearchRequest` from AuthContext + parsed
+      body. Defense-in-depth: AGENCY AuthContext with null/empty
+      `accountId` short-circuits to 403 before any DB call. Tests:
+      new `search.controller.reconciliation.test.ts` (14 tests:
+      allow / omit / mismatch on each field / OPERATOR-403 /
+      defense-in-depth) plus two added cases in
+      `search.controller.guards.test.ts` (HTTP-level: operator with
+      `SEARCH_EXECUTE` still 403; AGENCY body.accountId mismatch
+      → 403). Existing `search.controller.test.ts` business-logic
+      integration tests updated: the pass-through `JwtAuthGuard`
+      stand-in now echoes body IDs into a synthetic AGENCY
+      `AuthContext` so reconciliation passes. Pattern doc
+      `docs/architecture/auth-endpoint-retrofit-pattern.md`
+      updated with the reconciliation step, the OPERATOR-403
+      branch, and a Layer C test guideline. Typecheck + lint +
+      build clean; 26 search guard+reconciliation tests pass.
+- [x] **ADR-026 Slice E4-A** — first endpoint-retrofit pattern for
+      human auth + permissions. `SearchController` (`POST /search`)
+      gated with `@UseGuards(JwtAuthGuard, RolesGuard)` +
+      `@RequirePermission(PERMISSIONS.SEARCH_EXECUTE)`. `SearchModule`
+      now imports `AuthModule` so the guard providers resolve at DI
+      time. `MeController` (`GET /me`) deliberately stays on
+      `JwtAuthGuard` only — it is the identity-baseline probe and a
+      `RolesGuard` on it would require new auth architecture (a
+      `SELF_READ` permission), which the slice forbids. Tests:
+      `apps/api/src/search/__tests__/search.controller.guards.test.ts`
+      with two layers — Layer A (Reflector / metadata pin: guard
+      order, decorator presence, role-permission matrix sanity) and
+      Layer B (HTTP exercise via a Nest test app with the real
+      `JwtAuthGuard` + `RolesGuard`, mocked validator/sync/resolver,
+      driven by `fetch`): 10/10 passing. Existing
+      `search.controller.test.ts` business-logic integration tests
+      override both guards with a pass-through stand-in so they
+      remain focused on pricing/sourcing/restriction assertions.
+      Added
+      `docs/architecture/auth-endpoint-retrofit-pattern.md` as the
+      reusable runbook for future retrofit slices (E5, etc.).
+      `/internal/*` routes unchanged — `InternalAuthGuard` continues
+      to gate them. Typecheck + lint + build clean; new guard tests
+      pass; pre-existing MinIO-dependent integration test is
+      environmental, not a regression.
+- [x] **ADR-026 Slice E2-B** — admin provisioning + Auth0 webhook
+      ingestion + bootstrap script. Adds `Auth0ManagementTokenService`
+      (M2M client_credentials cache, in-flight de-dup, near-expiry
+      proactive refresh), `Auth0ManagementClient` (narrow surface:
+      createUser/updateUser/deleteUser/getUserById; namespaced
+      `app_metadata` carries tenant_id + user_class + account_id),
+      `UserProvisioningService` (operator + agency provisioning,
+      Auth0-first then DB transaction holding `core_user` +
+      `user_account_membership` (agency only) + `user_role` grants
+      atomically; compensating Auth0 deleteUser on DB failure;
+      class-coherence + role-class checks fail loud at write time;
+      409 → `EmailAlreadyTakenError`; membership unique_violation →
+      `MembershipAlreadyExistsError`). `Auth0WebhookSignatureService`
+      verifies HMAC-SHA256 over `${ts}.${rawBody}` with replay
+      window (default 5 min); main.ts wires Express raw-body capture
+      so JSON.stringify reordering can never break verification.
+      `Auth0EventIngestionRepository` writes to the existing
+      `auth0_event_ingestion` ledger; `Auth0EventHandlerService`
+      processes `sce`/`scu` (email refresh), `scn` (display_name),
+      `sd` (deactivate), `sapi` Block/Unblock; per-entry transactions;
+      malformed-entry isolation; unknown types ledger-only. `POST
+      /webhooks/auth0` (`Auth0WebhookController`) returns uniform 401
+      on signature failure or missing raw body, 200 with batch summary
+      otherwise. `BootstrapPlatformAdminService` + CLI entry
+      (`apps/api/src/auth/bootstrap/bootstrap-platform-admin.ts`)
+      idempotently creates the first `platform_admin`: read-or-insert
+      `core_user`; reactivate if previously DEACTIVATED; idempotent
+      `platform_admin` grant via existing partial unique index.
+      Config: `auth.config.ts` extended with optional
+      `management: Auth0ManagementConfig | null` (all-or-nothing
+      M2M creds) and `webhookSecret: string | null`. Tests: 7 new
+      test files, 158/158 auth tests passing; typecheck + lint +
+      build clean.
 - [x] **ADR-021 2026-04-22** — rate, offer, restriction, and
       occupancy model. Three layers kept separate: canonical product
       dimensions (`hotel_room_type`, `hotel_rate_plan`,
