@@ -410,7 +410,10 @@ Highest-risk business truths. Violating any of these has asymmetric downside.
 ## 11. How Claude should work in this repo
 
 - Always read this file and `docs/prompts/session-start.md` at the start of a
-  new session.
+  new session. Also read `docs/PROJECT-STATE.md`,
+  `docs/product/capability-catalog.md`, and `docs/adrs/INDEX.md` so the
+  current state of the system, the locked capabilities, and the ADR
+  topology are loaded into context.
 - Always update `TASKS.md` when taking or finishing a task.
 - Always record material architecture decisions as a new ADR in
   `docs/adrs/`.
@@ -420,3 +423,34 @@ Highest-risk business truths. Violating any of these has asymmetric downside.
 - When a flow (search, book, cancel, reconcile) is designed, document it in
   `docs/flows/`.
 - Prefer editing existing docs over creating parallel ones.
+
+### Continuity-preservation rule (load-bearing)
+
+Every accepted slice that **adds, removes, reclassifies, or otherwise
+changes the behaviour or status of a capability** must update **all four
+of the following files in the same commit (or the immediately preceding
+commit) before the implementation commit is pushed:**
+
+1. `docs/product/capability-catalog.md` — add the new capability row,
+   move an existing row's status, or mark a deprecated capability
+   `superseded` / `deferred` / `rejected`. **Capabilities never
+   silently disappear.** A removed capability becomes a
+   `superseded` / `rejected` row with a one-line reason — it is not
+   deleted from the catalogue.
+2. `docs/adrs/INDEX.md` — if a new ADR was written, accepted, amended,
+   or superseded, update the index row(s).
+3. `docs/PROJECT-STATE.md` — refresh "what is implemented and pushed
+   right now," "what is design-locked but not yet implemented," and
+   "immediate next slice" if any of those changed. Update the
+   `Last updated` date.
+4. `TASKS.md` — mark the slice's task `[x]`, add the next slice's
+   tasks if newly identified, and adjust the "Now (this session)"
+   block.
+
+If a slice does not change behaviour (e.g. pure refactor, internal
+typecheck-only doc edit, comment-only change), only `TASKS.md` needs
+to be touched; the other three are unaffected.
+
+This rule exists because system scope and accepted decisions otherwise
+drift across compaction boundaries and across multi-session work. The
+canonical state lives in these four files; treat them as load-bearing.
