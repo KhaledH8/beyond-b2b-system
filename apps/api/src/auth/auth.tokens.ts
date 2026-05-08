@@ -1,4 +1,4 @@
-import type { AuthConfig } from './auth.config';
+import type { Auth0ManagementConfig, AuthConfig } from './auth.config';
 
 /**
  * DI tokens for the auth module. Kept separate from `auth.config.ts`
@@ -7,4 +7,4 @@ import type { AuthConfig } from './auth.config';
  */
 export const AUTH_CONFIG = 'AUTH_CONFIG' as const;
 
-export type { AuthConfig };
+export type { AuthConfig, Auth0ManagementConfig };

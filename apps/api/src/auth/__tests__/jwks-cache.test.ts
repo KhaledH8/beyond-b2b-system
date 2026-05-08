@@ -16,6 +16,8 @@ const config: AuthConfig = {
   jwksUri: 'https://auth.beyondborders.test/.well-known/jwks.json',
   bootstrapMode: false,
   defaultTenantId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  management: null,
+  webhookSecret: null,
 };
 
 const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });

@@ -17,7 +17,14 @@ describe('loadAuthConfig', () => {
 
   beforeEach(() => {
     saved = {};
-    for (const key of [...REQUIRED, 'AUTH0_BOOTSTRAP_MODE']) {
+    for (const key of [
+      ...REQUIRED,
+      'AUTH0_BOOTSTRAP_MODE',
+      'AUTH0_MGMT_CLIENT_ID',
+      'AUTH0_MGMT_CLIENT_SECRET',
+      'AUTH0_MGMT_AUDIENCE',
+      'AUTH0_WEBHOOK_SECRET',
+    ]) {
       saved[key] = process.env[key];
       delete process.env[key];
     }
@@ -76,5 +83,68 @@ describe('loadAuthConfig', () => {
     process.env['AUTH0_DEFAULT_TENANT_ID'] = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
     process.env['AUTH0_BOOTSTRAP_MODE'] = 'YES';
     expect(() => loadAuthConfig()).toThrow(/AUTH0_BOOTSTRAP_MODE/);
+  });
+
+  describe('E2-B optional config', () => {
+    function setRequiredEnv(): void {
+      process.env['AUTH0_ISSUER_BASE_URL'] = 'https://auth.beyondborders.test/';
+      process.env['AUTH0_AUDIENCE'] = 'https://api.beyondborders.test';
+      process.env['AUTH0_DEFAULT_TENANT_ID'] = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+    }
+
+    it('returns null management when M2M creds are unset', () => {
+      setRequiredEnv();
+      expect(loadAuthConfig().management).toBeNull();
+    });
+
+    it('loads management config when both client_id and secret are set', () => {
+      setRequiredEnv();
+      process.env['AUTH0_MGMT_CLIENT_ID'] = 'mgmt_client';
+      process.env['AUTH0_MGMT_CLIENT_SECRET'] = 'mgmt_secret';
+      const cfg = loadAuthConfig();
+      expect(cfg.management).not.toBeNull();
+      expect(cfg.management?.clientId).toBe('mgmt_client');
+      expect(cfg.management?.clientSecret).toBe('mgmt_secret');
+      // Default audience and token URL derive from issuer.
+      expect(cfg.management?.audience).toBe(
+        'https://auth.beyondborders.test/api/v2/',
+      );
+      expect(cfg.management?.tokenUrl).toBe(
+        'https://auth.beyondborders.test/oauth/token',
+      );
+    });
+
+    it('honors AUTH0_MGMT_AUDIENCE override', () => {
+      setRequiredEnv();
+      process.env['AUTH0_MGMT_CLIENT_ID'] = 'mgmt_client';
+      process.env['AUTH0_MGMT_CLIENT_SECRET'] = 'mgmt_secret';
+      process.env['AUTH0_MGMT_AUDIENCE'] = 'https://custom-mgmt.example/';
+      expect(loadAuthConfig().management?.audience).toBe(
+        'https://custom-mgmt.example/',
+      );
+    });
+
+    it('rejects half-configured M2M creds (client_id set, secret missing)', () => {
+      setRequiredEnv();
+      process.env['AUTH0_MGMT_CLIENT_ID'] = 'mgmt_client';
+      expect(() => loadAuthConfig()).toThrow(/together/);
+    });
+
+    it('rejects half-configured M2M creds (secret set, client_id missing)', () => {
+      setRequiredEnv();
+      process.env['AUTH0_MGMT_CLIENT_SECRET'] = 'mgmt_secret';
+      expect(() => loadAuthConfig()).toThrow(/together/);
+    });
+
+    it('returns null webhookSecret when unset', () => {
+      setRequiredEnv();
+      expect(loadAuthConfig().webhookSecret).toBeNull();
+    });
+
+    it('returns the webhook secret when set', () => {
+      setRequiredEnv();
+      process.env['AUTH0_WEBHOOK_SECRET'] = 'shh';
+      expect(loadAuthConfig().webhookSecret).toBe('shh');
+    });
   });
 });

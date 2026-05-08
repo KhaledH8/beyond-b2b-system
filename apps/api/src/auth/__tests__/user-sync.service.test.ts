@@ -25,6 +25,8 @@ const baseConfig: AuthConfig = {
   jwksUri: 'https://auth.beyondborders.test/.well-known/jwks.json',
   bootstrapMode: false,
   defaultTenantId: TENANT_ID,
+  management: null,
+  webhookSecret: null,
 };
 
 const fakePool = {} as unknown as Pool;
