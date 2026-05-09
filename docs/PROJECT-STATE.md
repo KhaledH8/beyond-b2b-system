@@ -219,13 +219,10 @@ table) follow.
 - **Tax engine ADR** — must land before reseller onboarding opens in
   Phase 3. UAE VAT minimal inline is acceptable for Phase 2 BB-direct.
 
-### Doc-debt blocking nothing but worth tracking
+### Doc-debt
 
-- **Back-write ADR-026** (identity / role model). Implemented but the
-  ADR file is missing; ADR-027 and ADR-028 both reference it by name.
-- **ADR-025** — referenced in conversation history; either back-write
-  (if there's a decision behind it) or formally mark the number unused
-  in `docs/adrs/INDEX.md`.
+None outstanding. ADR-026 was back-written 2026-05-09. ADR-025 is
+formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 ---
 

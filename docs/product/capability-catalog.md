@@ -64,7 +64,7 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 | Bootstrap platform_admin CLI | implemented | Idempotent first-admin provisioning. | `apps/api/src/auth/bootstrap/` | ADR-026 (E2-B) |
 | `GET /me` identity probe | implemented | Identity-baseline route gated by `JwtAuthGuard` only (deliberately no `RolesGuard`). | `apps/api/src/auth/me.controller.ts` | ADR-026 (E4-A) |
 | Endpoint retrofit pattern | implemented | Canonical `JwtAuthGuard + RolesGuard + @RequirePermission` + body reconciliation runbook. | `docs/architecture/auth-endpoint-retrofit-pattern.md` | ADR-026 (E4-A + E4-B) |
-| `/search` auth + reconciliation | implemented | First retrofitted endpoint; AGENCY body must match `AuthContext` or 403; OPERATOR 403 with E8 policy message. | `apps/api/src/search/search.controller.ts` | ADR-026 (E4-B) |
+| `/search` auth + reconciliation | implemented | First retrofitted endpoint; AGENCY body must match `AuthContext` or 403; OPERATOR 403 with E8 policy message. | `apps/api/src/search/search.controller.ts` | ADR-026 D14 |
 | Operator impersonation | locked-by-ADR | DB-bound grants; AGENCY-target only in V1; ticket_ref required; read-only; `IMPERSONATION_DENY_INITIAL` deny-list overlay. | (planned: `apps/api/src/auth/impersonation/`) | ADR-027 |
 
 ## 4. Audit Infrastructure

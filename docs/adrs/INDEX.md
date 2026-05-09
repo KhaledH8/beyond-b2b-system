@@ -63,35 +63,17 @@ Status legend:
 | ADR | Title | Status | Controls | Depends on |
 |---|---|---|---|---|
 | ADR-024 | FX strategy — search display + checkout lock | Accepted | Three-tier FX: OXR live · ECB fallback/reference · Stripe FX Quotes for locked checkout. | ADR-004, ADR-010, ADR-012 |
-| ADR-025 | *(missing on disk — referenced in conversation history; doc-debt)* | Missing | — | — |
-| ADR-026 | Identity / role model — Auth0 + DB-resolved permissions | Missing (implemented in slices E1, E2-A, E2-B, E3-A, E4-A, E4-B) | `JwtAuthGuard`, `RolesGuard`, `PermissionResolverService`, `AuthContext` shape, `PERMISSIONS` catalogue, default deny, AGENCY/OPERATOR user classes, identity-baseline route exception (`GET /me`), endpoint retrofit pattern, body-vs-AuthContext reconciliation. **The decisions are locked in code and in `docs/architecture/auth-endpoint-retrofit-pattern.md`; the ADR document itself needs to be back-written.** | ADR-006, ADR-007 |
+| ADR-025 | *(unused number — reserved during planning; no decision behind it)* | Retired (unused) | — | — |
+| ADR-026 | Identity, role, and permission model | Accepted (back-written 2026-05-09; implemented across slices E1, E2-A, E2-B, E3-A, E4-A, E4-B) | `JwtAuthGuard`, `RolesGuard`, `PermissionResolverService`, `AuthContext` shape, `PERMISSIONS` catalogue + role-permission matrix, default deny, AGENCY/OPERATOR user classes, `core_user` mirror, `user_role` + `user_account_membership` schema, admin provisioning, webhook ingestion, bootstrap CLI, identity-baseline exception (`GET /me`), endpoint retrofit pattern, body-vs-AuthContext reconciliation. | ADR-006, ADR-007 |
 | ADR-027 | Operator impersonation | Accepted (no code yet) | DB-bound impersonation grants; AGENCY-target only in V1; `ticket_ref` required; read-only V1; `IMPERSONATION_DENY_INITIAL` deny-list overlay; audit Layers 1/2/3. | ADR-026, ADR-028 |
 | ADR-028 | Audit log infrastructure — append-only events, schema, access | Accepted (no code yet; locked 2026-05-08 with amendment pass) | DB-role-enforced append-only; composite category × month partitioning; `AuditService` with category-aware emission (AUTH/IMPERSONATION transactional, APP/SECURITY background); self-audited reads; partition-drop retention with `audit_pruning_log`. | ADR-026, ADR-027 |
 
 ---
 
-## Doc-debt: ADRs missing from disk
+## Doc-debt
 
-Two ADR numbers are referenced in code or other ADRs but their files do
-not exist:
-
-- **ADR-025** — referenced once in conversation history; current
-  understanding is that the number was reserved during planning but the
-  document was never written. Either back-write it (if there is a
-  decision behind the number) or formally retire it (mark as "unused
-  number") in this index.
-- **ADR-026** — the identity / role model. Decisions are *implemented*
-  across slices E1 → E4-B (auth0 JWT validation, JIT user sync,
-  permission catalogue, role + membership data model, `RolesGuard`,
-  endpoint retrofit pattern, body-vs-AuthContext reconciliation) and
-  *documented* in `docs/architecture/auth-endpoint-retrofit-pattern.md`.
-  ADR-027 and ADR-028 both depend on ADR-026 by name. The ADR itself
-  needs to be **back-written** so future contributors can find the
-  rationale in one place rather than reconstruct it from slice
-  commits and the retrofit-pattern runbook.
-
-These are tracked here, not in `TASKS.md`, because they are documentation
-debt rather than feature work — the design is already done.
+None outstanding. ADR-025 was a reserved-but-unused number (retired
+above). ADR-026 was back-written on 2026-05-09.
 
 ---
 
