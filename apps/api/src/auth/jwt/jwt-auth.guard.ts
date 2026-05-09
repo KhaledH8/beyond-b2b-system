@@ -6,8 +6,14 @@ import {
   type CanActivate,
   type ExecutionContext,
 } from '@nestjs/common';
+import type { Pool } from '@bb/db';
 import type { Request } from 'express';
+import { PG_POOL } from '../../database/database.module';
 import { AUTH_CONTEXT_KEY, type AuthContext } from '../auth-context';
+import {
+  setImpersonationGrantId,
+  setRequestActor,
+} from '../../audit/request-context';
 import {
   InvalidJwtError,
   JwtValidatorService,
@@ -16,9 +22,10 @@ import {
   MissingUserError,
   UserSyncService,
 } from '../user-sync/user-sync.service';
+import { ImpersonationGrantRepository } from '../impersonation/impersonation-grant.repository';
 
 /**
- * Default guard for human-user endpoints (Slice E2-A).
+ * Default guard for human-user endpoints (Slice E2-A + ADR-027).
  *
  * Steps on every request:
  *
@@ -26,18 +33,20 @@ import {
  *   2. Validate signature, issuer, audience, expiry, and required
  *      claims via `JwtValidatorService`.
  *   3. Resolve the application-side `core_user` row via
- *      `UserSyncService.syncOnAuthentication`. Outside bootstrap
- *      mode, an unprovisioned token is a 401 — never a JIT create.
- *   4. Attach `AuthContext` to the request for downstream handlers
+ *      `UserSyncService.syncOnAuthentication`.
+ *   4. For OPERATOR users: look up any active impersonation grant.
+ *      If one exists, build an AGENCY-shaped `AuthContext` with the
+ *      `impersonation` block set (ADR-027 D6/D7). Stamp the grant id
+ *      into the request audit context so all audit events carry it.
+ *   5. Stamp the authenticated actor into the request audit context
+ *      (RequestIdMiddleware has already initialised it with ANONYMOUS).
+ *   6. Attach `AuthContext` to the request for downstream handlers
  *      and the `@Auth()` decorator.
  *
  * Failure responses are deliberately uniform 401s with a generic
  * message. The reason is logged (warn level) but never returned to
  * the client — leaking "wrong audience" vs "expired" vs
  * "unprovisioned" gives an attacker information they shouldn't have.
- *
- * The existing `InternalAuthGuard` is unchanged. Internal `/internal/*`
- * endpoints continue to use it; this guard is for human-user routes.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -47,6 +56,9 @@ export class JwtAuthGuard implements CanActivate {
     @Inject(JwtValidatorService)
     private readonly validator: JwtValidatorService,
     @Inject(UserSyncService) private readonly userSync: UserSyncService,
+    @Inject(ImpersonationGrantRepository)
+    private readonly grantRepo: ImpersonationGrantRepository,
+    @Inject(PG_POOL) private readonly pool: Pool,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -64,8 +76,6 @@ export class JwtAuthGuard implements CanActivate {
         this.logger.warn(`JWT rejected: ${err.message}`);
         throw new UnauthorizedException('Invalid token');
       }
-      // JWKS fetch failure or similar — surface a 401, not a 5xx,
-      // because from the client's perspective auth is unavailable.
       this.logger.error(
         `JWT validation error: ${(err as Error).message}`,
       );
@@ -81,25 +91,67 @@ export class JwtAuthGuard implements CanActivate {
       });
     } catch (err) {
       if (err instanceof MissingUserError) {
-        // Already logged at warn inside the sync service.
         throw new UnauthorizedException('Invalid token');
       }
       throw err;
     }
 
-    // Reconcile token-claimed account_id against DB tenant. The
-    // user_account_membership lookup that confirms the account_id
-    // belongs to this user lands in E3; in this slice we attach the
-    // claim verbatim if the user is AGENCY-class.
-    const authContext: AuthContext = {
-      auth0Sub: claims.auth0Sub,
-      userId: user.id,
+    // Stamp the authenticated actor into the request audit context.
+    // RequestIdMiddleware has already initialised the context with
+    // ANONYMOUS; we upgrade it here now that we know the real actor.
+    setRequestActor({
+      actorKind: 'USER',
+      actorUserId: user.id,
       tenantId: user.tenantId,
-      accountId: user.userClass === 'AGENCY' ? claims.accountId : null,
-      userClass: user.userClass,
-    };
-    (req as unknown as Record<symbol, unknown>)[AUTH_CONTEXT_KEY] =
-      authContext;
+    });
+
+    let authContext: AuthContext;
+
+    if (user.userClass === 'OPERATOR') {
+      // ADR-027 D7: check for an active impersonation grant.
+      const grant = await this.grantRepo.findActiveByActor(this.pool, user.id);
+
+      if (grant) {
+        // Build AGENCY-shaped context so every downstream E4-B-style
+        // reconciliation works transparently (ADR-027 D6).
+        authContext = {
+          auth0Sub: claims.auth0Sub,
+          userId: user.id,
+          tenantId: user.tenantId,
+          accountId: grant.targetAccountId,
+          userClass: 'AGENCY',
+          impersonation: {
+            grantId: grant.id,
+            actorUserId: user.id,
+            actorAuth0Sub: claims.auth0Sub,
+            actorUserClass: 'OPERATOR',
+            expiresAt: grant.expiresAt,
+            scope: 'READ_ONLY',
+          },
+        };
+        // Stamp grant id so all audit events in this request carry it.
+        setImpersonationGrantId(grant.id);
+      } else {
+        authContext = {
+          auth0Sub: claims.auth0Sub,
+          userId: user.id,
+          tenantId: user.tenantId,
+          accountId: null,
+          userClass: 'OPERATOR',
+        };
+      }
+    } else {
+      // AGENCY user: no impersonation lookup (ADR-027 D2).
+      authContext = {
+        auth0Sub: claims.auth0Sub,
+        userId: user.id,
+        tenantId: user.tenantId,
+        accountId: user.userClass === 'AGENCY' ? claims.accountId : null,
+        userClass: user.userClass,
+      };
+    }
+
+    (req as unknown as Record<symbol, unknown>)[AUTH_CONTEXT_KEY] = authContext;
     return true;
   }
 }

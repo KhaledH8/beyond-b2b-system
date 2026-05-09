@@ -4,6 +4,8 @@ import { PG_POOL } from '../../database/database.module';
 import type { AuthContext } from '../auth-context';
 import {
   expandRolesToPermissions,
+  IMPERSONATION_DENY_INITIAL,
+  PERMISSION_KIND,
   type Permission,
   type Role,
 } from './permissions';
@@ -12,31 +14,28 @@ import { UserAccountMembershipRepository } from './user-account-membership.repos
 
 /**
  * Resolves whether an authenticated user holds a given permission
- * (ADR-026 Slice E3-A).
+ * (ADR-026 Slice E3-A + ADR-027 impersonation branch).
  *
  * Locked rules:
  *
- *   - **DB-resolved per request.** No cache in this slice. ADR-026
- *     consequences mention an in-process cache as a follow-up
- *     optimization; deferring it keeps invalidation logic out of E3-A
- *     where it would compete with role-grant semantics that are
- *     still landing.
+ *   - **DB-resolved per request.** No cache in this slice.
  *
  *   - **Default deny.** A user with no active grants holds no
- *     permissions. There is no implicit permission granted by being
- *     authenticated.
+ *     permissions.
  *
  *   - **Class coherence at read time.** `expandRolesToPermissions`
- *     silently ignores roles outside the user's class, so a corrupted
- *     row (e.g. an OPERATOR user with `account_admin` grant) does not
- *     leak permissions. Failure mode is denial, never escalation.
+ *     silently ignores roles outside the user's class.
  *
- *   - **Account-scope coherence.** For AGENCY users we additionally
- *     verify the user has an ACTIVE membership AND that the token-
- *     claimed `accountId` matches that membership. A drift between
- *     token claim and DB membership is treated as "no permissions"
- *     (the future write-side check at the endpoint will produce a
- *     403). Operator users skip this check (they have no membership).
+ *   - **Account-scope coherence.** For AGENCY users we verify active
+ *     membership AND token-claimed accountId match. During impersonation
+ *     this check is bypassed — the target account was already validated
+ *     at grant-start time and the accountId on the AuthContext is the
+ *     grant's targetAccountId.
+ *
+ *   - **Impersonation branch (ADR-027 D7).** When `auth.impersonation`
+ *     is present the resolver bypasses the operator's own roles and
+ *     returns `(agency/account_admin) ∩ READ ∖ IMPERSONATION_DENY_INITIAL`
+ *     plus IMPERSONATE_AGENCY_ACCOUNT so the operator can call stop/active.
  */
 
 export interface ResolvedPermissions {
@@ -46,7 +45,8 @@ export interface ResolvedPermissions {
   readonly permissions: ReadonlySet<Permission>;
   /**
    * AGENCY only — the account_id the user is bound to in the DB.
-   * Operator users get `null`.
+   * Operator users get `null`. During impersonation this is the target
+   * account id (from the grant, not from a membership row).
    */
   readonly accountId: string | null;
 }
@@ -69,6 +69,37 @@ export class PermissionResolverService {
    * call (or `hasPermission` below).
    */
   async resolve(auth: AuthContext): Promise<ResolvedPermissions> {
+    // ── Impersonation branch (ADR-027 D7) ───────────────────────────
+    // When the OPERATOR is acting under an impersonation grant, skip
+    // their own operator roles entirely. Synthesise agency/account_admin
+    // permissions filtered to READ-only, minus the initial deny-list,
+    // plus IMPERSONATE_AGENCY_ACCOUNT so stop/active remain reachable.
+    if (auth.impersonation) {
+      const agencyAdminPerms = expandRolesToPermissions('AGENCY', [
+        'account_admin',
+      ]);
+      const filtered = new Set<Permission>();
+      for (const p of agencyAdminPerms) {
+        if (
+          PERMISSION_KIND[p] === 'READ' &&
+          !IMPERSONATION_DENY_INITIAL.has(p)
+        ) {
+          filtered.add(p);
+        }
+      }
+      // Preserve stop/active reachability while impersonating (D10).
+      filtered.add('impersonate.agency_account' as Permission);
+
+      return {
+        userId: auth.userId,
+        userClass: 'AGENCY',
+        roles: ['account_admin'],
+        permissions: filtered,
+        accountId: auth.accountId, // = grant.targetAccountId (set by JwtAuthGuard)
+      };
+    }
+
+    // ── Normal path ─────────────────────────────────────────────────
     const roles = await this.roleRepo.findActiveRolesForUser(
       this.pool,
       auth.userId,
@@ -76,13 +107,6 @@ export class PermissionResolverService {
 
     let resolvedAccountId: string | null = null;
     if (auth.userClass === 'AGENCY') {
-      // V1 hardening: AGENCY tokens MUST carry account_id. A null
-      // here is a token-shape or guard-wiring defect, not something
-      // we silently paper over by trusting DB membership. The JWT
-      // validator already enforces this at the OIDC layer; the
-      // resolver re-asserts it as defense in depth so any future
-      // alternate path that constructs an AuthContext (tests,
-      // service-internal flows) still fails closed.
       if (auth.accountId === null) {
         this.logger.warn(
           `AGENCY user ${auth.userId} authContext.accountId is null; denying all permissions`,
@@ -101,8 +125,6 @@ export class PermissionResolverService {
         auth.userId,
       );
       if (!membership) {
-        // AGENCY user with no active membership: ADR-026 §C.5
-        // invariant violated. Permissions degrade to empty set.
         this.logger.warn(
           `AGENCY user ${auth.userId} has no active membership; denying all permissions`,
         );
@@ -115,11 +137,6 @@ export class PermissionResolverService {
         };
       }
       if (auth.accountId !== membership.accountId) {
-        // Token claim disagrees with DB membership. The token was
-        // minted under one account; the user actually belongs to
-        // another. Treat as "no permissions" — the JwtAuthGuard has
-        // already passed identity verification, but authorization
-        // refuses to trust the claim.
         this.logger.warn(
           `AGENCY user ${auth.userId} token accountId=${auth.accountId} != db accountId=${membership.accountId}; denying`,
         );

@@ -280,6 +280,96 @@ export function expandRolesToPermissions(
 }
 
 /**
+ * ADR-027 D8 — static READ/WRITE classification for every permission.
+ *
+ * This map is a load-bearing primitive. During an active impersonation
+ * grant the resolver retains only READ permissions from the synthetic
+ * agency/account_admin set. Adding a new permission to PERMISSIONS
+ * without also adding its kind here is a TypeScript compile error
+ * (the `satisfies` clause enforces exhaustiveness).
+ *
+ * Mis-classifying a write as READ is a contract bug: it silently
+ * allows a write action during impersonation. Every diff touching this
+ * map should be reviewed with that risk in mind.
+ *
+ * SEARCH_EXECUTE is READ despite executing pricing logic and hitting
+ * suppliers — this is the acknowledged classification from ADR-027 D8.
+ * The legitimate support case ("show me what the agency saw") requires
+ * search; classifying it WRITE would make impersonation useless.
+ */
+export const PERMISSION_KIND: Readonly<Record<Permission, 'READ' | 'WRITE'>> =
+  {
+    // ─── Booking — operator-side ─────────────────────────────────────
+    [PERMISSIONS.BOOKING_READ]:                          'READ',
+    [PERMISSIONS.BOOKING_READ_FULL_PRICING_TRACE]:       'READ',
+    [PERMISSIONS.BOOKING_READ_FX_PROVENANCE]:            'READ',
+    [PERMISSIONS.BOOKING_CONFIRM_MANUAL]:                'WRITE',
+    [PERMISSIONS.BOOKING_CANCEL_MANUAL]:                 'WRITE',
+    [PERMISSIONS.BOOKING_REFUND_MANUAL]:                 'WRITE',
+    [PERMISSIONS.BOOKING_ELIGIBILITY_OVERRIDE]:          'WRITE',
+    // ─── Booking — agency-side ────────────────────────────────────────
+    [PERMISSIONS.BOOKING_CREATE]:                        'WRITE',
+    [PERMISSIONS.BOOKING_READ_OWN]:                      'READ',
+    [PERMISSIONS.BOOKING_READ_ACCOUNT]:                  'READ',
+    [PERMISSIONS.BOOKING_CANCEL_OWN_WITHIN_POLICY]:      'WRITE',
+    [PERMISSIONS.BOOKING_CANCEL_ACCOUNT_WITHIN_POLICY]:  'WRITE',
+    [PERMISSIONS.BOOKING_REFUND_OWN_WITHIN_POLICY]:      'WRITE',
+    [PERMISSIONS.BOOKING_REFUND_ACCOUNT_WITHIN_POLICY]:  'WRITE',
+    // ─── Documents ────────────────────────────────────────────────────
+    [PERMISSIONS.DOCUMENTS_VIEW_TAX]:                    'READ',
+    [PERMISSIONS.DOCUMENTS_REISSUE]:                     'WRITE',
+    [PERMISSIONS.DOCUMENTS_DOWNLOAD_OWN]:                'READ',
+    [PERMISSIONS.DOCUMENTS_DOWNLOAD_ACCOUNT]:            'READ',
+    // ─── Ledger / finance ─────────────────────────────────────────────
+    [PERMISSIONS.LEDGER_READ]:                           'READ',
+    [PERMISSIONS.LEDGER_ADJUST]:                         'WRITE',
+    [PERMISSIONS.LEDGER_READ_ACCOUNT]:                   'READ',
+    [PERMISSIONS.STATEMENTS_DOWNLOAD]:                   'READ',
+    // ─── Pricing ──────────────────────────────────────────────────────
+    [PERMISSIONS.PRICING_RULE_READ]:                     'READ',
+    [PERMISSIONS.PRICING_RULE_EDIT]:                     'WRITE',
+    // ─── Supplier / mapping ───────────────────────────────────────────
+    [PERMISSIONS.SUPPLIER_CONFIG_READ]:                  'READ',
+    [PERMISSIONS.SUPPLIER_CONFIG_EDIT]:                  'WRITE',
+    [PERMISSIONS.MAPPING_QUEUE_READ]:                    'READ',
+    [PERMISSIONS.MAPPING_DECISION_WRITE]:                'WRITE',
+    // ─── Account / reseller ───────────────────────────────────────────
+    [PERMISSIONS.ACCOUNT_READ]:                          'READ',
+    [PERMISSIONS.ACCOUNT_EDIT]:                          'WRITE',
+    [PERMISSIONS.ACCOUNT_SETTINGS_EDIT]:                 'WRITE',
+    [PERMISSIONS.RESELLER_PROFILE_READ]:                 'READ',
+    [PERMISSIONS.RESELLER_PROFILE_EDIT]:                 'WRITE',
+    // ─── Search ───────────────────────────────────────────────────────
+    [PERMISSIONS.SEARCH_EXECUTE]:                        'READ',  // ADR-027 D8 acknowledged
+    // ─── User / API key management ────────────────────────────────────
+    [PERMISSIONS.USERS_MANAGE]:                          'WRITE',
+    [PERMISSIONS.API_KEYS_MANAGE]:                       'WRITE',
+    [PERMISSIONS.USER_ROLE_GRANT]:                       'WRITE',
+    // ─── Cross-cutting ────────────────────────────────────────────────
+    [PERMISSIONS.AUDIT_READ]:                            'READ',
+    [PERMISSIONS.IMPERSONATE_AGENCY_ACCOUNT]:            'WRITE',
+  } satisfies Record<Permission, 'READ' | 'WRITE'>;
+
+/**
+ * ADR-027 D13 — initial deny-list applied on top of the impersonation
+ * READ filter.
+ *
+ * These are READ-classified permissions that are nonetheless withheld
+ * from impersonation sessions in V1.0 because they expose sensitive
+ * financial or PII-rich data that warrants a deliberate slice review
+ * before becoming a support tool.
+ *
+ * This set only restricts the impersonation overlay — agency users
+ * accessing these surfaces under their own credentials are unaffected.
+ * The list shrinks over time via ADR amendments.
+ */
+export const IMPERSONATION_DENY_INITIAL: ReadonlySet<Permission> = new Set([
+  PERMISSIONS.LEDGER_READ_ACCOUNT,
+  PERMISSIONS.STATEMENTS_DOWNLOAD,
+  PERMISSIONS.RESELLER_PROFILE_READ,
+]);
+
+/**
  * Test-only export so unit tests can assert the matrix without
  * reading the maps via reflection. Production code uses
  * `expandRolesToPermissions`.

@@ -65,7 +65,7 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 | `GET /me` identity probe | implemented | Identity-baseline route gated by `JwtAuthGuard` only (deliberately no `RolesGuard`). | `apps/api/src/auth/me.controller.ts` | ADR-026 (E4-A) |
 | Endpoint retrofit pattern | implemented | Canonical `JwtAuthGuard + RolesGuard + @RequirePermission` + body reconciliation runbook. | `docs/architecture/auth-endpoint-retrofit-pattern.md` | ADR-026 (E4-A + E4-B) |
 | `/search` auth + reconciliation | implemented | First retrofitted endpoint; AGENCY body must match `AuthContext` or 403; OPERATOR 403 with E8 policy message. | `apps/api/src/search/search.controller.ts` | ADR-026 D14 |
-| Operator impersonation | locked-by-ADR | DB-bound grants; AGENCY-target only in V1; ticket_ref required; read-only; `IMPERSONATION_DENY_INITIAL` deny-list overlay. | (planned: `apps/api/src/auth/impersonation/`) | ADR-027 |
+| Operator impersonation | implemented | DB-bound `impersonation_grant` table; AGENCY-target only in V1; `ticket_ref` required; read-only; `PERMISSION_KIND` map; `IMPERSONATION_DENY_INITIAL` deny-list overlay in `PermissionResolverService`; `AuthContext.impersonation` block set by `JwtAuthGuard`; `POST /impersonation/start`, `POST /impersonation/stop`, `GET /impersonation/active`; audit events `IMPERSONATION_STARTED / ENDED / START_REJECTED` via `emitInTransaction`. | `apps/api/src/auth/impersonation/`, `infra/migrations/auth/20260510000001_impersonation_grant.ts` | ADR-027 |
 
 ## 4. Audit Infrastructure
 

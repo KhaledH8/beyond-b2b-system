@@ -4,7 +4,7 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-09 (ADR-028 V1.0 steps 1–5)
+- **Last updated:** 2026-05-09 (ADR-027 V1.0 operator impersonation)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -80,6 +80,19 @@ rule in `CLAUDE.md` §11.
   policy message.
 - Endpoint retrofit pattern documented in
   `docs/architecture/auth-endpoint-retrofit-pattern.md`.
+- **ADR-027 V1.0 operator impersonation** — `impersonation_grant`
+  migration; `ImpersonationGrantRepository`; `ImpersonationService`
+  (start/stop/getActive + all subject enforcement + audit);
+  `ImpersonationController` (`POST /impersonation/start`,
+  `POST /impersonation/stop`, `GET /impersonation/active`);
+  `AuthContext.impersonation` block; `JwtAuthGuard` flips
+  `userClass → 'AGENCY'` + sets `accountId` for active OPERATOR
+  grants; `PermissionResolverService` impersonation branch
+  (`(agency/account_admin) ∩ READ ∖ IMPERSONATION_DENY_INITIAL +
+  IMPERSONATE_AGENCY_ACCOUNT`); `PERMISSION_KIND` map; audit events
+  `IMPERSONATION_STARTED / ENDED / START_REJECTED` via
+  `emitInTransaction`. 24 new tests across 4 test files. Typecheck
+  clean.
 
 ### FX
 - ADR-024 implemented through C5d.2:
@@ -168,16 +181,7 @@ Sequencing notes follow each cluster.
 
 ### Operator impersonation (ADR-027)
 
-Locked: DB-bound `impersonation_grant` table; AGENCY-target only in V1;
-read-only V1; `ticket_ref` required (NOT NULL); `PERMISSION_KIND` map;
-`IMPERSONATION_DENY_INITIAL` deny-list overlay (initial rollout limited
-to search + booking/document read); one un-ended grant per actor;
-`AuthContext` carries optional `impersonation` field.
-
-**Blocked on:** ADR-028 V1.0 infrastructure (append-only enforcement,
-`audit_event` table, `AuditService` skeleton, `request_id`
-propagation). Cannot ship until those preconditions are live in
-production.
+**V1.0 implemented 2026-05-09.** See the "Identity & auth" section above.
 
 ### Audit log infrastructure (ADR-028)
 
@@ -234,20 +238,10 @@ formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 ## Immediate next slice
 
-**ADR-027 V1.0** — operator impersonation (now unblocked by ADR-028 V1.0):
-
-- `impersonation_grant` migration (DB-bound grant table; `ticket_ref` NOT NULL;
-  AGENCY-target only; one un-ended grant per actor enforced by partial unique index).
-- `OperatorImpersonationGuard` — checks `impersonation_grant` and sets
-  `impersonationGrantId` in `RequestAuditContext` via `setImpersonationGrantId()`.
-- `POST /internal/auth/impersonation` + `DELETE /internal/auth/impersonation/:id`
-  endpoints (start + end grant).
-- `IMPERSONATION_DENY_INITIAL` deny-list overlay enforced at guard level.
-- IMPERSONATION audit events via `emitInTransaction()` — the first real
-  `AuditService` emitter.
-
-After ADR-027 V1.0 ships, return to FX C5d.3/C5d.4/C6/C7 or Phase 1 follow-ups
-(multi-supplier search, tax/fee composition) per priority.
+**ADR-028 V1.0 steps 6–11** (audit read API, retention cron, SENSITIVE_ACCESS
+table, backfill) or **FX C5d.3/C5d.4/C6/C7** per priority. ADR-027 V1.0
+is now shipped; impersonation is the first real emitter of `IMPERSONATION`
+category events.
 
 ---
 

@@ -10,6 +10,8 @@ import { JwtValidatorService } from '../../auth/jwt/jwt-validator.service';
 import { JwksCacheService } from '../../auth/jwt/jwks-cache.service';
 import { UserSyncService } from '../../auth/user-sync/user-sync.service';
 import { PermissionResolverService } from '../../auth/permissions/permission-resolver.service';
+import { ImpersonationGrantRepository } from '../../auth/impersonation/impersonation-grant.repository';
+import { PG_POOL } from '../../database/database.module';
 import { REQUIRE_PERMISSION_KEY } from '../../auth/permissions/require-permission.decorator';
 import {
   PERMISSIONS,
@@ -201,6 +203,8 @@ const fakeSearchService = {
     { provide: JwksCacheService, useValue: fakeJwks },
     { provide: UserSyncService, useValue: fakeUserSync },
     { provide: PermissionResolverService, useValue: fakeResolver },
+    { provide: ImpersonationGrantRepository, useValue: { findActiveByActor: vi.fn(async () => null) } },
+    { provide: PG_POOL, useValue: {} },
     JwtAuthGuard,
     RolesGuard,
   ],

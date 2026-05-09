@@ -21,9 +21,12 @@ import { Auth0EventIngestionRepository } from './webhook/auth0-event-ingestion.r
 import { Auth0EventHandlerService } from './webhook/auth0-event-handler.service';
 import { Auth0WebhookController } from './webhook/auth0-webhook.controller';
 import { BootstrapPlatformAdminService } from './bootstrap/bootstrap-platform-admin.service';
+import { ImpersonationGrantRepository } from './impersonation/impersonation-grant.repository';
+import { ImpersonationService } from './impersonation/impersonation.service';
+import { ImpersonationController } from './impersonation/impersonation.controller';
 
 /**
- * Auth module (ADR-026 Slices E2-A + E2-B + E3-A).
+ * Auth module (ADR-026 Slices E2-A + E2-B + E3-A + ADR-027 V1.0).
  *
  * Provides:
  *
@@ -31,46 +34,35 @@ import { BootstrapPlatformAdminService } from './bootstrap/bootstrap-platform-ad
  *     - `JwtAuthGuard`              default guard for human-user routes.
  *     - `JwtValidatorService`       Auth0 OIDC token validation.
  *     - `JwksCacheService`          JWKS fetch + cache + rotation handling.
- *     - `UserSyncService`           auth0_sub → core_user.id resolution
- *                                    with bootstrap-only JIT.
+ *     - `UserSyncService`           auth0_sub → core_user.id resolution.
  *     - `CoreUserRepository`        narrow read/write on core_user.
  *
  *   E3-A — permission infrastructure:
  *     - `RolesGuard`                default-deny permission gate.
- *     - `PermissionResolverService` AuthContext → roles + permissions,
- *                                    fresh DB read on every request.
+ *     - `PermissionResolverService` AuthContext → roles + permissions
+ *                                    (normal path + impersonation branch).
  *     - `UserRoleRepository`        read/write on user_role.
  *     - `UserAccountMembershipRepository` read/write on
  *                                    user_account_membership.
  *
  *   E2-B — admin provisioning + webhook ingestion + bootstrap:
- *     - `Auth0ManagementTokenService`  M2M access token cache.
- *     - `Auth0ManagementClient`        narrow Management API surface.
- *     - `UserProvisioningService`      atomic Auth0 + DB user
- *                                       provisioning for operator and
- *                                       agency users.
- *     - `Auth0WebhookSignatureService` HMAC-SHA256 verification for
- *                                       Log Streams deliveries.
- *     - `Auth0EventIngestionRepository` idempotency ledger writes.
- *     - `Auth0EventHandlerService`     applies known event types to
- *                                       the `core_user` mirror.
- *     - `Auth0WebhookController`       `POST /webhooks/auth0`.
- *     - `BootstrapPlatformAdminService` idempotent first-admin
- *                                       creation, run via the
- *                                       `bootstrap-platform-admin.ts`
- *                                       CLI entry point.
+ *     - `Auth0ManagementTokenService`
+ *     - `Auth0ManagementClient`
+ *     - `UserProvisioningService`
+ *     - `Auth0WebhookSignatureService`
+ *     - `Auth0EventIngestionRepository`
+ *     - `Auth0EventHandlerService`
+ *     - `Auth0WebhookController`
+ *     - `BootstrapPlatformAdminService`
  *
- * Endpoint retrofit is NOT in this slice — RolesGuard exists, but
- * no existing business endpoint is gated by it yet. Wiring per-endpoint
- * `@UseGuards(JwtAuthGuard, RolesGuard)` + `@RequirePermission(...)`
- * is per-area work that lands in the slices retrofitting each module.
- *
- * The existing `InternalAuthGuard` is unrelated; it remains the auth
- * primitive for `/internal/*` service-to-service calls (ADR-026 D1).
+ *   ADR-027 V1.0 — operator impersonation:
+ *     - `ImpersonationGrantRepository`  read/write on impersonation_grant.
+ *     - `ImpersonationService`          start / stop / getActive logic.
+ *     - `ImpersonationController`       POST start, POST stop, GET active.
  */
 @Module({
   imports: [DatabaseModule],
-  controllers: [MeController, Auth0WebhookController],
+  controllers: [MeController, Auth0WebhookController, ImpersonationController],
   providers: [
     {
       provide: AUTH_CONFIG,
@@ -101,6 +93,10 @@ import { BootstrapPlatformAdminService } from './bootstrap/bootstrap-platform-ad
 
     // E2-B — bootstrap
     BootstrapPlatformAdminService,
+
+    // ADR-027 V1.0 — impersonation
+    ImpersonationGrantRepository,
+    ImpersonationService,
   ],
   exports: [
     JwtAuthGuard,
@@ -112,6 +108,8 @@ import { BootstrapPlatformAdminService } from './bootstrap/bootstrap-platform-ad
     UserAccountMembershipRepository,
     UserProvisioningService,
     BootstrapPlatformAdminService,
+    ImpersonationGrantRepository,
+    ImpersonationService,
   ],
 })
 export class AuthModule {}

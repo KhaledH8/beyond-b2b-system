@@ -7,7 +7,13 @@ import type {
   UserAccountMembershipRepository,
 } from '../permissions/user-account-membership.repository';
 import type { AuthContext } from '../auth-context';
-import { PERMISSIONS, type Role } from '../permissions/permissions';
+import {
+  IMPERSONATION_DENY_INITIAL,
+  PERMISSION_KIND,
+  PERMISSIONS,
+  type Permission,
+  type Role,
+} from '../permissions/permissions';
 
 /**
  * Pure unit tests for PermissionResolverService.
@@ -169,6 +175,149 @@ describe('PermissionResolverService.resolve', () => {
     );
     const r = await svc.resolve(operatorAuth());
     expect(r.permissions.size).toBe(0);
+  });
+});
+
+// ── Impersonation branch (ADR-027 D7) ───────────────────────────────────────
+
+const GRANT_ID  = '01ARZ3NDEKTSV4RRFFQ69G5GRA';
+
+function impersonatingAuth(accountId = ACCOUNT_ID): AuthContext {
+  return {
+    auth0Sub: 'auth0|op',
+    userId: USER_ID,
+    tenantId: TENANT_ID,
+    accountId,
+    userClass: 'AGENCY', // flipped by JwtAuthGuard during impersonation
+    impersonation: {
+      grantId: GRANT_ID,
+      actorUserId: USER_ID,
+      actorAuth0Sub: 'auth0|op',
+      actorUserClass: 'OPERATOR',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      scope: 'READ_ONLY',
+    },
+  };
+}
+
+describe('PermissionResolverService — impersonation branch (ADR-027 D7)', () => {
+  it('returns only READ permissions from agency/account_admin during impersonation', async () => {
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo([]), // operator roles are bypassed — should not be queried
+      makeMembershipRepo(undefined),
+    );
+    const r = await svc.resolve(impersonatingAuth());
+
+    // All returned permissions must be READ-classified
+    for (const p of r.permissions) {
+      if (p === PERMISSIONS.IMPERSONATE_AGENCY_ACCOUNT) continue; // explicit add
+      expect(PERMISSION_KIND[p as Permission]).toBe('READ');
+    }
+    // userClass is AGENCY (as set by JwtAuthGuard)
+    expect(r.userClass).toBe('AGENCY');
+  });
+
+  it('filters out WRITE permissions during impersonation', async () => {
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo([]),
+      makeMembershipRepo(undefined),
+    );
+    const r = await svc.resolve(impersonatingAuth());
+
+    expect(r.permissions.has(PERMISSIONS.BOOKING_CREATE)).toBe(false);
+    expect(r.permissions.has(PERMISSIONS.BOOKING_CANCEL_OWN_WITHIN_POLICY)).toBe(false);
+    expect(r.permissions.has(PERMISSIONS.BOOKING_CANCEL_ACCOUNT_WITHIN_POLICY)).toBe(false);
+    expect(r.permissions.has(PERMISSIONS.ACCOUNT_SETTINGS_EDIT)).toBe(false);
+    expect(r.permissions.has(PERMISSIONS.USERS_MANAGE)).toBe(false);
+  });
+
+  it('applies IMPERSONATION_DENY_INITIAL over the READ set', async () => {
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo([]),
+      makeMembershipRepo(undefined),
+    );
+    const r = await svc.resolve(impersonatingAuth());
+
+    // Every permission in IMPERSONATION_DENY_INITIAL must be absent
+    for (const denied of IMPERSONATION_DENY_INITIAL) {
+      expect(r.permissions.has(denied)).toBe(false);
+    }
+    // Specifically the three locked deny-list entries (ADR-027 D13)
+    expect(r.permissions.has(PERMISSIONS.LEDGER_READ_ACCOUNT)).toBe(false);
+    expect(r.permissions.has(PERMISSIONS.STATEMENTS_DOWNLOAD)).toBe(false);
+    expect(r.permissions.has(PERMISSIONS.RESELLER_PROFILE_READ)).toBe(false);
+  });
+
+  it('allows SEARCH_EXECUTE during impersonation (acknowledged READ classification)', async () => {
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo([]),
+      makeMembershipRepo(undefined),
+    );
+    const r = await svc.resolve(impersonatingAuth());
+    expect(r.permissions.has(PERMISSIONS.SEARCH_EXECUTE)).toBe(true);
+  });
+
+  it('preserves IMPERSONATE_AGENCY_ACCOUNT so stop/active remain reachable', async () => {
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo([]),
+      makeMembershipRepo(undefined),
+    );
+    const r = await svc.resolve(impersonatingAuth());
+    expect(r.permissions.has(PERMISSIONS.IMPERSONATE_AGENCY_ACCOUNT)).toBe(true);
+  });
+
+  it('does not call roleRepo.findActiveRolesForUser during impersonation', async () => {
+    const roleRepo = makeRoleRepo([]);
+    const svc = new PermissionResolverService(
+      fakePool,
+      roleRepo,
+      makeMembershipRepo(undefined),
+    );
+    await svc.resolve(impersonatingAuth());
+    expect(roleRepo.findActiveRolesForUser).not.toHaveBeenCalled();
+  });
+
+  it('returns the target accountId from the AuthContext, not from membership', async () => {
+    const membershipRepo = makeMembershipRepo(ACTIVE_MEMBERSHIP);
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo([]),
+      membershipRepo,
+    );
+    const r = await svc.resolve(impersonatingAuth(ACCOUNT_ID));
+    expect(r.accountId).toBe(ACCOUNT_ID);
+    expect(membershipRepo.findActiveByUser).not.toHaveBeenCalled();
+  });
+
+  it('normal operator path is unaffected when no impersonation block is present', async () => {
+    const svc = new PermissionResolverService(
+      fakePool,
+      makeRoleRepo(['platform_admin']),
+      makeMembershipRepo(undefined),
+    );
+    const r = await svc.resolve(operatorAuth());
+    // platform_admin holds all permissions including WRITE ones
+    expect(r.permissions.has(PERMISSIONS.BOOKING_CREATE)).toBe(true);
+    expect(r.permissions.has(PERMISSIONS.LEDGER_ADJUST)).toBe(true);
+  });
+});
+
+// ── PERMISSION_KIND completeness ─────────────────────────────────────────────
+
+describe('PERMISSION_KIND map', () => {
+  it('classifies every PERMISSIONS entry exactly once', () => {
+    for (const key of Object.keys(PERMISSIONS)) {
+      const val = PERMISSIONS[key as keyof typeof PERMISSIONS] as Permission;
+      expect(
+        PERMISSION_KIND[val],
+        `PERMISSIONS.${key} (${val}) is missing from PERMISSION_KIND`,
+      ).toBeDefined();
+    }
   });
 });
 

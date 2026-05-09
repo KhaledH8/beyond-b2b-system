@@ -10,6 +10,27 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-027 V1.0 — operator impersonation** — `impersonation_grant`
+      migration (partial unique index, lifecycle constraints, 3 indexes);
+      `ImpersonationGrantRepository` (`findActiveByActor`,
+      `findUnendedByActor`, `insert`, `end`);
+      `ImpersonationService` (start validates ticketRef/reasonText/account
+      type/tenant/existing grants, auto-ends expired un-ended grant, emits
+      `IMPERSONATION_STARTED/ENDED/START_REJECTED` via `emitInTransaction`;
+      stop emits `IMPERSONATION_ENDED`; getActive delegates);
+      `ImpersonationController` (`POST /impersonation/start`,
+      `POST /impersonation/stop`, `GET /impersonation/active`; all guarded
+      `JwtAuthGuard + RolesGuard + @RequirePermission(IMPERSONATE_AGENCY_ACCOUNT)`);
+      `AuthContext.impersonation` block; `JwtAuthGuard` rewritten to flip
+      `userClass → 'AGENCY'`, set `accountId = grant.targetAccountId`,
+      call `setRequestActor` + `setImpersonationGrantId` on every auth;
+      `PermissionResolverService` impersonation branch
+      `(agency/account_admin) ∩ READ ∖ IMPERSONATION_DENY_INITIAL +
+      IMPERSONATE_AGENCY_ACCOUNT`; `PERMISSION_KIND` map + compile-time
+      exhaustiveness via `satisfies`; `AuthModule` updated;
+      `search.controller.guards.test.ts` `GuardTestModule` fixed for new
+      JwtAuthGuard constructor signature. 24 new / extended tests; 191/191
+      auth tests pass; 12/12 guard tests pass. Typecheck clean.
 - [x] **ADR-028 V1.0 infrastructure (steps 1–5)** — DB roles (`bb_app`,
       `bb_audit_retention`, `bb_admin`); `audit_event` composite-partitioned
       migration with append-only triggers, indexes, grants; `audit_pruning_log`
