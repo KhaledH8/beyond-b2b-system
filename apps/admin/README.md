@@ -3,9 +3,11 @@
 Internal operations console for Beyond Borders staff (operators).
 Next.js 15 + React 19 + App Router. Operator-only — no agency users.
 
-> **Status:** ADR-029 step 1 (env scaffolding + SDK verification notes).
-> Auth, layout, design system, and operator features land in subsequent
-> steps. The dev server boots today but has no real auth flow yet.
+> **Status:** ADR-029 step 2 (Auth0 SDK installed + session helper).
+> Layout, design system, and operator features land in subsequent
+> steps. The dev server boots and the SDK middleware mounts at
+> `/auth/login`, `/auth/logout`, `/auth/callback`. There is no
+> protected page yet — the layout-level operator gate ships in step 4.
 
 ## Local development
 
@@ -109,20 +111,41 @@ This is a v3 → v4 breaking change. The Allowed Callback URLs in the
 Auth0 dashboard (above) reflect the v4 paths. **Do not configure
 `/api/auth/callback`** — that is the v3 path.
 
-### What still needs to be verified at the SDK install slice
+### Verified at step 2 (SDK install) — 2026-05-10
 
-ADR-029 step 2 (Auth0 SDK install + session helper) MUST:
+- **Installed version:** `@auth0/nextjs-auth0@^4.20.0` (latest stable
+  on `latest` dist-tag at install time).
+- **Construction:** `new Auth0Client(opts)` from
+  `@auth0/nextjs-auth0/server`. The admin app passes options
+  explicitly from [`lib/env.ts`](lib/env.ts) (loud-fail validation
+  before SDK construction); the SDK's own env fallbacks
+  (`AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, etc.) are deliberately unused.
+- **Mount:** [`middleware.ts`](middleware.ts) at the repo-package
+  root calls `auth0.middleware(request)`. The matcher excludes
+  `_next/static`, `_next/image`, and metadata files; everything
+  else passes through so the SDK can roll session cookies.
+- **Routes mounted by the SDK** (confirmed in installed
+  `dist/server/client.d.ts`):
+  - `POST /auth/login`
+  - `GET  /auth/logout`
+  - `GET  /auth/callback`
+- **Env-name conventions match the v4 docs** — `APP_BASE_URL`,
+  `AUTH0_DOMAIN`, `AUTH0_SECRET`, `AUTH0_CLIENT_ID`,
+  `AUTH0_CLIENT_SECRET`, `AUTH0_AUDIENCE`, `AUTH0_SCOPE`. No further
+  changes to [`.env.example`](.env.example) or [`lib/env.ts`](lib/env.ts).
+- **Server-only fence:** [`lib/auth0.ts`](lib/auth0.ts) and
+  [`lib/session.ts`](lib/session.ts) start with `import 'server-only';`.
+  Vitest aliases the virtual module to a stub
+  ([`test/stubs/server-only.ts`](test/stubs/server-only.ts)); under
+  `next build` the real fence rejects any client-component import.
 
-1. Run `npm view @auth0/nextjs-auth0 versions` and pick the latest
-   stable v4.x release.
-2. Re-confirm the route convention list above against the installed
-   version's `README.md` and `V4_MIGRATION_GUIDE.md` — minor v4
-   releases have moved conventions before.
-3. Record the SDK version and verified route paths in the slice's
-   PR description.
-4. Update [`.env.example`](.env.example) and [`lib/env.ts`](lib/env.ts)
-   if any further env-name changes have shipped between this slice
-   (2026-05-10) and the SDK install slice.
+### Note for Next.js 16
+
+When this repo upgrades to Next.js 16, [`middleware.ts`](middleware.ts)
+should be renamed to `proxy.ts` and the exported function renamed
+from `middleware` to `proxy`. The SDK's middleware function is
+unchanged — only the Next.js-side convention. Step 2 ships on
+Next.js 15; the rename is owed at the upgrade slice.
 
 ### v4 documentation pointers
 

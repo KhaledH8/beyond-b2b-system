@@ -11,6 +11,7 @@
     "clean": "rimraf .next"
   },
   "dependencies": {
+    "@auth0/nextjs-auth0": "^4.20.0",
     "@bb/domain": "workspace:*",
     "@bb/ui": "workspace:*",
     "next": "^15.0.0",

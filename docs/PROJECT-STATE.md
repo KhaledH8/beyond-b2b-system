@@ -4,9 +4,9 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 step 1 — env scaffolding +
-  SDK verification notes; ADR-029 accepted; ADR-027 V1.0 e2e flow
-  verification + TTL/tenant hardening)
+- **Last updated:** 2026-05-10 (ADR-029 step 2 — Auth0 SDK install +
+  session helper; step 1 env scaffolding; ADR-029 accepted; ADR-027
+  V1.0 e2e flow verification + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -253,10 +253,32 @@ on URLs, ULID, AUTH0_DOMAIN shape, scope rules) + 34 unit tests +
 + admin-local `vitest.config.ts`. Root `vitest.config.ts` extended
 so CI runs the admin tests. **ADR-029 D8 patched 2026-05-10** to
 use the verified `@auth0/nextjs-auth0` v4 env names
-(`APP_BASE_URL` and `AUTH0_DOMAIN`); the v4 mounted route paths
-(`/auth/login` | `/auth/logout` | `/auth/callback`, no `/api/`
-prefix) are recorded in the admin README for the SDK-install slice
-to re-verify. No SDK installed yet; step 2 is next.
+(`APP_BASE_URL` and `AUTH0_DOMAIN`).
+
+**Step 2 (Auth0 SDK install + session helper) shipped 2026-05-10:**
+`@auth0/nextjs-auth0@^4.20.0` installed in `apps/admin` only;
+`apps/admin/middleware.ts` mounts the SDK at `/auth/login` /
+`/auth/logout` / `/auth/callback`; `apps/admin/lib/auth0.ts`
+exports a lazy `getAuth0Client()` singleton constructed from
+`loadAdminEnv()` (no SDK env fall-back); `apps/admin/lib/session.ts`
+exports `getSession()`, `getAccessToken()`,
+`requireOperatorSession()` plus typed errors `UnauthorizedError`,
+`NotOperatorError`, `SessionApiError`. `requireOperatorSession()`
+calls backend `/me` with `cache: 'no-store'`, accepts only
+`userClass === 'OPERATOR'`, and rejects empty `roles[]` if the
+field is present (forward-compat). `import 'server-only'` fences
+the auth + session modules from client-component import; vitest
+aliases the virtual module to a stub
+(`apps/admin/test/stubs/server-only.ts`). 18 new session tests
+cover happy path, missing session, token failures, /me network /
+401 / 403 / 5xx, AGENCY rejection, empty-roles rejection,
+`cache: 'no-store'` enforcement, bearer attachment, base-URL
+composition, and the server-only top-line guard on both modules.
+
+Steps 3–7 remain: API client → operator-class layout gate →
+5 design-system components → layout v0 → README + continuity-doc
+tidy. No operator feature ships in `apps/admin` until all seven
+steps merge.
 
 ### Rest of the design-locked surface
 

@@ -10,6 +10,48 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-029 step 2 (2026-05-10) — Auth0 SDK install + session
+      helper.** Installed `@auth0/nextjs-auth0@^4.20.0` in
+      `apps/admin` only (no other workspace touched). New artefacts:
+      `apps/admin/middleware.ts` mounts the SDK at `/auth/login` /
+      `/auth/logout` / `/auth/callback` (verified against installed
+      `dist/server/client.d.ts`); `apps/admin/lib/auth0.ts` exports
+      lazy `getAuth0Client()` singleton constructed from
+      `loadAdminEnv()` (no SDK env fall-back used);
+      `apps/admin/lib/session.ts` exports `getSession()`,
+      `getAccessToken()`, `requireOperatorSession()` plus typed
+      errors `UnauthorizedError`, `NotOperatorError`,
+      `SessionApiError`. Both auth + session modules start with
+      `import 'server-only';` to fence them from client components
+      at `next build` time. `requireOperatorSession()` reads the
+      session, acquires an access token, calls backend `/me` with
+      `cache: 'no-store'` and `Authorization: Bearer <token>`,
+      accepts only `userClass === 'OPERATOR'`, rejects empty
+      `roles[]` if the field is present (forward-compat for when
+      the API adds roles to /me), and returns a typed
+      `OperatorIdentity`. Vitest aliases the `server-only` virtual
+      module to a stub
+      (`apps/admin/test/stubs/server-only.ts`); root
+      `vitest.config.ts` mirrors the alias so CI's `pnpm test`
+      runs admin tests. 18 new session tests cover happy path,
+      missing session, getAccessToken failure / empty / whitespace,
+      /me network / 401 / 403 / 5xx / invalid-JSON, AGENCY
+      rejection, empty-roles rejection, `cache: 'no-store'` and
+      bearer-header construction, base-URL composition, and the
+      `server-only` top-line guard on both modules. Lint +
+      typecheck clean; admin tests 52/52 (was 34, +18); root tests
+      642 passed (was 624, +18) with the same 4 MinIO-baseline
+      failures unrelated to this slice. **No login UI; no admin
+      layout; no design-system components; no API client beyond
+      what /me needs inside the session helper.**
+- [ ] **Next — ADR-029 step 3: API client.** `apps/admin/lib/api-client.ts`:
+      typed error class hierarchy
+      (`ApiUnauthorizedError`, `ApiForbiddenError`,
+      `ApiNotFoundError`, `ApiConflictError`,
+      `ApiValidationError`, `ApiServerError`, `ApiNetworkError`),
+      `cache: 'no-store'` hard-coded inside the helper, bearer
+      auto-attached via `getAccessToken()`, X-Request-Id
+      propagation, no retry inside the helper.
 - [x] **ADR-029 step 1 (2026-05-10) — env scaffolding + Auth0 SDK
       verification notes.** New artefacts in `apps/admin/`:
       `.env.example` (9 required vars, every name verified against
