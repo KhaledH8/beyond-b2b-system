@@ -68,6 +68,12 @@ Status legend:
 | ADR-027 | Operator impersonation | Accepted (V1.0 implemented 2026-05-09) | DB-bound impersonation grants; AGENCY-target only in V1; `ticket_ref` required; read-only V1; `IMPERSONATION_DENY_INITIAL` deny-list overlay; audit Layers 1/2/3. | ADR-026, ADR-028 |
 | ADR-028 | Audit log infrastructure — append-only events, schema, access | Accepted (V1.0 steps 1–5 implemented 2026-05-09) | DB-role-enforced append-only; composite category × month partitioning; `AuditService` with category-aware emission (AUTH/IMPERSONATION transactional, APP/SECURITY background); self-audited reads; partition-drop retention with `audit_pruning_log`. | ADR-026, ADR-027 |
 
+## Frontend / Admin App (ADR-029 →)
+
+| ADR | Title | Status | Controls | Depends on |
+|---|---|---|---|---|
+| ADR-029 | Admin app foundation — auth, session, API client, layout, design system v0 | Accepted (no code yet) | Auth0 Universal Login via `@auth0/nextjs-auth0`; single `lib/session.ts` with `requireOperatorSession()`; single `lib/api-client.ts` (no-store, bearer auto-attached, typed error classes, no retry); operator-only layout gate; Tailwind + shadcn-copy 5-component v0 (`Button`, `Input`, `Textarea`, `Card`, `Banner`); single-tenant per deployment; vitest+jsdom for V0.1; no `offline_access`; no dev-token bypass. | ADR-007, ADR-011, ADR-026, ADR-027 |
+
 ---
 
 ## Doc-debt
@@ -96,17 +102,24 @@ ADR-012 (wallet/ledger)
 ADR-021 (rate/offer)         →  ADR-022 (authored core)  →  ADR-023 (authored restrictions/cancellation)
 ADR-024 (FX)
 ADR-026 (identity)           →  ADR-027 (impersonation)  →  ADR-028 (audit infrastructure)
+                             ↘
+                              ADR-029 (admin app foundation)
 ```
 
 ADR-027 and ADR-028 are mutually entangled: ADR-027 *requires* ADR-028's
 append-only invariant in production before its V1.0 ships, and ADR-028's
 IMPERSONATION-category schema is shaped to satisfy ADR-027.
 
+ADR-029 sits downstream of ADR-026 (consumes `AuthContext` shape and
+`/me`) and is a hard prerequisite for ADR-027's UI banner (D11) — the
+backend impersonation surface is shipped (ADR-027 V1.0), but the UI
+slice cannot start until ADR-029 is implemented.
+
 ---
 
 ## How to add a new ADR
 
-1. Pick the next available number (currently ADR-029).
+1. Pick the next available number (currently ADR-030).
 2. Use existing ADRs as the template (e.g. ADR-027, ADR-028 for the
    current style with locked-rule sections).
 3. Add a row to the appropriate section above with title, status,

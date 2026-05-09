@@ -10,6 +10,52 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-029 accepted (2026-05-10) — admin app foundation: auth,
+      session, API client, layout, design system v0.** Locks the
+      foundation slice that must ship before any operator UI feature
+      lands in `apps/admin`. Auth0 Universal Login via
+      `@auth0/nextjs-auth0` v4; single `lib/session.ts` with
+      `requireOperatorSession()` as the only allowed reader of
+      session state; single server-side `lib/api-client.ts`
+      (`cache: 'no-store'`, bearer auto-attached, typed error class
+      hierarchy, no retry inside the helper); operator-only layout
+      gate that 403s AGENCY users to a static page; Tailwind +
+      shadcn-copy 5-component v0 (`Button`, `Input`, `Textarea`,
+      `Card`, `Banner`) in `apps/admin/components/`; layout v0
+      (Header / `<SystemBanner />` slot / Sidebar / main); single-
+      tenant per deployment via `BB_TENANT_ID`; vitest+jsdom for V0.1
+      smoke; no `offline_access`; no dev-token bypass; manual OIDC
+      via `openid-client` kept only as escape hatch. Continuity
+      docs updated: `INDEX.md` (new "Frontend / Admin App" section
+      + dependency-graph entry), `PROJECT-STATE.md` (design-locked
+      cluster + immediate-next-slice options), `capability-catalog.md`
+      (admin-app-foundation + impersonation-UI rows under §15
+      Admin & Internal Surfaces), `TASKS.md` (this entry).
+- [ ] **Next slice — ADR-029 admin app foundation implementation
+      (Phase 1 frontend track).** Smallest safe sequence per
+      ADR-029 §"Implementation order":
+        1. Env scaffolding (`apps/admin/.env.example`,
+           `next.config.ts` env validation, fail-loud-on-missing).
+        2. Auth0 SDK install + `lib/session.ts`
+           (`requireOperatorSession()`).
+        3. `lib/api-client.ts` (typed error classes, header
+           construction, `cache: 'no-store'` enforcement).
+        4. Operator-class layout gate + static `/not-operator` page +
+           vitest+jsdom smoke (unauthenticated GET / → 302 to
+           login).
+        5. Design-system v0: 5 components in
+           `apps/admin/components/`, Tailwind setup, `/_dev/components`
+           visual smoke gated to non-production.
+        6. Layout v0: Header / `<SystemBanner />` slot / Sidebar /
+           main; sign-out wired; Home → `/`.
+        7. `apps/admin/README.md` + continuity-doc updates.
+      No operator feature ships in `apps/admin` until step 7 merges.
+- [ ] **Next-after-foundation — ADR-027 impersonation UI slice.**
+      Persistent banner mounts in the `<SystemBanner />` slot from
+      ADR-029 step 6; status / start / stop page lives at
+      `/impersonation`. Strictly blocked on ADR-029 implementation;
+      do not start until the 8 "what must be proven" gates from
+      ADR-029 are demonstrated on a green CI build.
 - [x] **ADR-027 V1.0 hardening + e2e backend verification (2026-05-10)**
       — TTL bounds enforced (default 30 min, min 5, max 240; invalid env
       values throw at startup via `parseTtlMinutes`); `JwtAuthGuard` adds

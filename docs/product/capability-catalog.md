@@ -226,6 +226,8 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 | Hotelbeds internal seam | implemented | `POST /internal/suppliers/hotelbeds/content-sync` and `/search` — dev-oriented HTTP surface for adapter end-to-end. | `apps/api/src/adapters/hotelbeds/` | — |
 | Audit read API (`GET /admin/audit/events`) | locked-by-ADR | Permission-gated by `AUDIT_READ` + `AUDIT_READ_SENSITIVE`; emits `AUDIT_QUERY_EXECUTED` on every call. | (planned: ADR-028 step 7) | ADR-028 D9 |
 | `bb-audit query` CLI | locked-by-ADR | Same query surface as the API; emits `AUDIT_QUERY_EXECUTED`. | (planned: ADR-028 step 8) | ADR-028 D9 |
+| Admin app foundation (auth/session/API client/layout/design system v0) | locked-by-ADR | Auth0 Universal Login via `@auth0/nextjs-auth0`; single `lib/session.ts` with `requireOperatorSession()`; single server-side `lib/api-client.ts` (no-store, bearer auto-attached, typed error classes, no retry); operator-only layout gate (AGENCY users 403); Tailwind + shadcn-copy 5-component v0 (`Button`, `Input`, `Textarea`, `Card`, `Banner`); single-tenant per deployment via `BB_TENANT_ID`; vitest+jsdom smoke; no `offline_access`; no dev-token bypass. Hard prerequisite for impersonation UI banner (ADR-027 D11) and every future operator surface. | (planned: `apps/admin`) | ADR-026, ADR-027, ADR-029 |
+| Operator impersonation UI (banner + start/stop/active page) | locked-by-ADR | ADR-027 D10/D11 surface in `apps/admin`. Persistent banner mounts in the `<SystemBanner />` slot ADR-029 provides. Depends on ADR-029 implementation shipping first. | (planned: `apps/admin/app/impersonation/`) | ADR-026, ADR-027, ADR-029 |
 
 ## 16. Data Storage Substrate
 
