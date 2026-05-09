@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -39,7 +40,10 @@ interface StartBody {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('impersonation')
 export class ImpersonationController {
-  constructor(private readonly service: ImpersonationService) {}
+  constructor(
+    @Inject(ImpersonationService)
+    private readonly service: ImpersonationService,
+  ) {}
 
   /**
    * POST /impersonation/start — begin impersonating an agency account.

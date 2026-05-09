@@ -33,8 +33,6 @@ const describeIntegration = HAS_DATABASE ? describe : describe.skip;
 describeIntegration('audit_event append-only trigger (integration)', () => {
   let pool: Pool;
   let insertedId: string;
-  let insertedOccurredAt: string;
-
   beforeAll(async () => {
     pool = new Pool({ connectionString: process.env['DATABASE_URL']! });
 
@@ -44,7 +42,6 @@ describeIntegration('audit_event append-only trigger (integration)', () => {
     // Use a fixed timestamp in the current month so the partition exists.
     // The migration creates partitions for the current and next calendar month.
     const now = new Date().toISOString();
-    insertedOccurredAt = now;
 
     await pool.query(
       `INSERT INTO audit_event (

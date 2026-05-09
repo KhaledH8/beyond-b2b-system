@@ -161,7 +161,7 @@ describe('AuditService — request context stamping', () => {
     );
 
     expect(queryFn).toHaveBeenCalledOnce();
-    const [_sql, params] = queryFn.mock.calls[0] as [string, unknown[]];
+    const [, params] = queryFn.mock.calls[0] as [string, unknown[]];
 
     // Params positional: $8=actorKind, $9=actorUserId, $14=requestId,
     // $16=ipAddress, $17=userAgent.
@@ -179,7 +179,7 @@ describe('AuditService — request context stamping', () => {
     // No requestContextStore.run() wrapper — simulates a cron / CLI caller.
     await service.emit(SECURITY_EVENT);
 
-    const [_sql, params] = queryFn.mock.calls[0] as [string, unknown[]];
+    const [, params] = queryFn.mock.calls[0] as [string, unknown[]];
     expect(params![7]).toBe('ANONYMOUS'); // $8 actor_kind
     expect(params![8]).toBeNull();        // $9 actor_user_id
     expect(params![13]).toBeNull();       // $14 request_id

@@ -144,14 +144,12 @@ describe('RequestIdMiddleware — AsyncLocalStorage context', () => {
     const req = makeReq();
     const res = makeRes();
     let insideCtx: ReturnType<typeof getRequestContext> = undefined;
-    let outsideCtxBefore: ReturnType<typeof getRequestContext>;
-    let outsideCtxAfter: ReturnType<typeof getRequestContext>;
 
-    outsideCtxBefore = getRequestContext();
+    const outsideCtxBefore = getRequestContext();
     mw.use(req, res as unknown as Response, () => {
       insideCtx = getRequestContext();
     });
-    outsideCtxAfter = getRequestContext();
+    const outsideCtxAfter = getRequestContext();
 
     expect(outsideCtxBefore).toBeUndefined();
     expect(insideCtx).toBeDefined();
