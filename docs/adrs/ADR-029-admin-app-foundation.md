@@ -299,15 +299,28 @@ fall-back values, no silent defaults.
 
 | Name | Purpose | Required | Example shape |
 |---|---|---|---|
-| `AUTH0_SECRET` | Cookie encryption + signing key | yes | 32+ random bytes, base64 |
-| `AUTH0_BASE_URL` | This admin app's public URL | yes | `https://admin.beyondborders.tld` |
-| `AUTH0_ISSUER_BASE_URL` | Auth0 tenant URL | yes | `https://beyondborders.eu.auth0.com` |
+| `AUTH0_SECRET` | Cookie encryption + signing key | yes | 32+ random bytes, hex/base64 |
+| `APP_BASE_URL` | This admin app's public URL | yes | `https://admin.beyondborders.tld` |
+| `AUTH0_DOMAIN` | Auth0 tenant hostname (no scheme, no path) | yes | `beyondborders.eu.auth0.com` |
 | `AUTH0_CLIENT_ID` | Auth0 application client id | yes | `abc123...` |
 | `AUTH0_CLIENT_SECRET` | Auth0 application client secret | yes | redacted |
 | `AUTH0_AUDIENCE` | API audience | yes | `https://api.beyondborders.tld` |
 | `AUTH0_SCOPE` | OIDC scope string | yes | `openid profile email` |
 | `BB_API_BASE_URL` | Backend API root | yes | `https://api.beyondborders.tld` |
 | `BB_TENANT_ID` | The single tenant this deployment serves | yes | 26-char ULID |
+
+> **2026-05-10 — verified against `@auth0/nextjs-auth0` v4.** Earlier
+> drafts of this table listed `AUTH0_BASE_URL` and
+> `AUTH0_ISSUER_BASE_URL` (the v3 names). The SDK v4 migration guide
+> renames these to `APP_BASE_URL` and `AUTH0_DOMAIN` (hostname only,
+> no scheme). The names above are what `apps/admin/.env.example` and
+> `apps/admin/lib/env.ts` actually use as of step 1 of the
+> implementation order. D2 already required this verification; this
+> annotation records the result so future readers don't have to
+> re-derive it. The mounted route paths follow the same v4
+> migration: `/auth/login`, `/auth/logout`, `/auth/callback` (no
+> `/api` prefix); see `apps/admin/README.md` § "Auth0 SDK route +
+> env-name verification".
 
 **Refresh-token policy (V0.1).** `AUTH0_SCOPE` deliberately omits
 `offline_access`. V0.1 does not request refresh tokens and does not

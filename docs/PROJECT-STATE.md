@@ -4,8 +4,9 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 admin app foundation accepted;
-  ADR-027 V1.0 e2e flow verification + TTL/tenant hardening)
+- **Last updated:** 2026-05-10 (ADR-029 step 1 — env scaffolding +
+  SDK verification notes; ADR-029 accepted; ADR-027 V1.0 e2e flow
+  verification + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -213,7 +214,8 @@ read API; CLI; retention cron; SENSITIVE_ACCESS table; backfill.
 
 ### Admin app foundation (ADR-029)
 
-**Accepted 2026-05-10. No code yet.** `apps/admin` today is a
+**Accepted 2026-05-10. Step 1 implemented 2026-05-10; steps 2–7
+remain.** `apps/admin` today is a
 Next.js 15 App Router scaffold (one-line `layout.tsx`, placeholder
 home page, no auth, no API client, no design system; `packages/ui`
 is a placeholder).
@@ -243,6 +245,18 @@ Implementation order (per ADR-029): env scaffolding → Auth0 SDK +
 session helper → API client → operator-class layout gate → 5 design-
 system components → layout v0 → README + continuity-doc updates.
 No operator feature ships in `apps/admin` until all seven steps merge.
+
+**Step 1 (env scaffolding) shipped 2026-05-10:** `apps/admin/.env.example`
++ `apps/admin/lib/env.ts` (`loadAdminEnv()` with loud-fail validation
+on URLs, ULID, AUTH0_DOMAIN shape, scope rules) + 34 unit tests +
+`apps/admin/README.md` (dev-tenant setup, SDK route-convention notes)
++ admin-local `vitest.config.ts`. Root `vitest.config.ts` extended
+so CI runs the admin tests. **ADR-029 D8 patched 2026-05-10** to
+use the verified `@auth0/nextjs-auth0` v4 env names
+(`APP_BASE_URL` and `AUTH0_DOMAIN`); the v4 mounted route paths
+(`/auth/login` | `/auth/logout` | `/auth/callback`, no `/api/`
+prefix) are recorded in the admin README for the SDK-install slice
+to re-verify. No SDK installed yet; step 2 is next.
 
 ### Rest of the design-locked surface
 

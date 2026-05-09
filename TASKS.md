@@ -10,6 +10,35 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-029 step 1 (2026-05-10) — env scaffolding + Auth0 SDK
+      verification notes.** New artefacts in `apps/admin/`:
+      `.env.example` (9 required vars, every name verified against
+      `@auth0/nextjs-auth0` v4 docs via Context7); `lib/env.ts`
+      (`loadAdminEnv()` + `AdminEnvError`, loud-fail on missing/
+      malformed vars, ULID + URL + AUTH0_DOMAIN-shape validation,
+      `openid` required + `offline_access` rejected per ADR-029 D8,
+      no fallback defaults); `lib/__tests__/env.test.ts` (34 tests,
+      every error path); `vitest.config.ts` (widens include to
+      `lib/**/*.test.ts` since admin uses `lib/` not `src/`);
+      `README.md` (dev-tenant setup, no-bypass policy, SDK
+      route-convention findings: v4 mounts `/auth/login` |
+      `/auth/logout` | `/auth/callback`, NOT `/api/auth/*`; v4
+      env-name discrepancy documented). Root `vitest.config.ts`
+      include extended to `apps/*/lib/**/*.test.ts` so CI picks up
+      the admin tests via `pnpm test`. **ADR-029 D8 patched** —
+      `AUTH0_BASE_URL` → `APP_BASE_URL`, `AUTH0_ISSUER_BASE_URL` →
+      `AUTH0_DOMAIN`, with a 2026-05-10 verification annotation
+      (D2 already required this verification). Lint + typecheck
+      clean; admin tests 34/34 pass; root tests 624 passed (was 590,
+      +34) with the same 4 MinIO-baseline failures unrelated to this
+      slice. **No SDK installed; no UI code; no login flow.**
+- [ ] **Next — ADR-029 step 2: Auth0 SDK install + `lib/session.ts`
+      (`requireOperatorSession()`).** Run `npm view
+      @auth0/nextjs-auth0 versions`, install latest stable v4.x,
+      re-verify route conventions against the installed README,
+      record version + paths in PR description. Then write the
+      session helper backed by `loadAdminEnv()`. Tests cover no
+      session, AGENCY user (rejected), valid operator, `/me` failure.
 - [x] **ADR-029 accepted (2026-05-10) — admin app foundation: auth,
       session, API client, layout, design system v0.** Locks the
       foundation slice that must ship before any operator UI feature

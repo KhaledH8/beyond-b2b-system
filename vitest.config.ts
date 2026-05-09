@@ -7,6 +7,9 @@ export default defineConfig({
       'packages/*/src/**/*.{test,spec}.ts',
       'packages/*/*/src/**/*.{test,spec}.ts',
       'apps/*/src/**/*.{test,spec}.ts',
+      // ADR-029: apps/admin uses lib/ rather than src/ (Next.js App
+      // Router convention); the per-app vitest.config.ts mirrors this.
+      'apps/*/lib/**/*.{test,spec}.ts',
     ],
   },
 });
