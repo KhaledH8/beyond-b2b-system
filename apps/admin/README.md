@@ -3,11 +3,11 @@
 Internal operations console for Beyond Borders staff (operators).
 Next.js 15 + React 19 + App Router. Operator-only — no agency users.
 
-> **Status:** ADR-029 step 2 (Auth0 SDK installed + session helper).
-> Layout, design system, and operator features land in subsequent
-> steps. The dev server boots and the SDK middleware mounts at
-> `/auth/login`, `/auth/logout`, `/auth/callback`. There is no
-> protected page yet — the layout-level operator gate ships in step 4.
+> **Status:** ADR-029 step 3 (server-side API client). Layout,
+> design system, and operator features land in subsequent steps.
+> The dev server boots, the SDK middleware mounts at `/auth/login`,
+> `/auth/logout`, `/auth/callback`, and the api-client + session
+> helper are ready for the layout-level operator gate (step 4).
 
 ## Local development
 
@@ -138,6 +138,56 @@ Auth0 dashboard (above) reflect the v4 paths. **Do not configure
   Vitest aliases the virtual module to a stub
   ([`test/stubs/server-only.ts`](test/stubs/server-only.ts)); under
   `next build` the real fence rejects any client-component import.
+
+### API client (step 3)
+
+[`lib/api-client.ts`](lib/api-client.ts) is the single entry point
+for backend calls. Locked rules (ADR-029 D5):
+
+- **Server-side only** (`import 'server-only'`).
+- **Caller never passes a token.** `apiFetch` calls `getAccessToken()`
+  from [`lib/session.ts`](lib/session.ts) on every request.
+- **`cache: 'no-store'` is hard-coded.** Not a parameter; cannot be
+  overridden by callers.
+- **No retry inside the helper.** Retry policy is the caller's
+  concern (V0.1 callers do not retry).
+- **No request/response body logging.** Bodies live in audit logs
+  (ADR-028), never in app logs.
+- **`X-Request-Id`** propagated when the caller passes a valid ULID
+  via `opts.requestId` (typically forwarded from
+  `headers().get('x-request-id')` in a server component); fresh
+  ULID generated otherwise. The id is attached to every thrown
+  `ApiError` so support can correlate with backend logs.
+
+Typed error hierarchy:
+
+| Status | Error class |
+|---|---|
+| no token / 401 | `ApiUnauthorizedError` |
+| 403 | `ApiForbiddenError` |
+| 404 | `ApiNotFoundError` |
+| 409 | `ApiConflictError` |
+| 400 | `ApiValidationError` (carries parsed `bodyJson` when JSON) |
+| 5xx / other non-2xx | `ApiServerError` (carries `status`) |
+| network / fetch threw | `ApiNetworkError` (chains original via `Error.cause`) |
+
+Example use from a server component:
+
+```ts
+import { headers } from 'next/headers';
+import { apiFetch, ApiUnauthorizedError } from '@/lib/api-client';
+
+const inbound = (await headers()).get('x-request-id') ?? undefined;
+try {
+  const me = await apiFetch<MeResponse>('GET', '/me', {
+    requestId: inbound,
+  });
+  // ...
+} catch (err) {
+  if (err instanceof ApiUnauthorizedError) redirect('/auth/login');
+  throw err;
+}
+```
 
 ### Note for Next.js 16
 

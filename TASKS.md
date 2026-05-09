@@ -10,6 +10,45 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-029 step 3 (2026-05-10) — server-side API client.**
+      `apps/admin/lib/api-client.ts` exports `apiFetch<T>(method,
+      path, opts?)` plus a typed error hierarchy: `ApiError` base
+      + `ApiUnauthorizedError` (401 or no token), `ApiForbiddenError`
+      (403), `ApiNotFoundError` (404), `ApiConflictError` (409),
+      `ApiValidationError` (400 with parsed `bodyJson` when JSON),
+      `ApiServerError` (5xx + any other non-2xx), `ApiNetworkError`
+      (chains via `Error.cause`). Every error carries `requestId`.
+      Locked rules per ADR-029 D5/D6/D12: `import 'server-only'`
+      fence; `cache: 'no-store'` hard-coded (not a parameter); bearer
+      auto-attached via `getAccessToken()` from `lib/session.ts`
+      (caller never passes a token); `Content-Type: application/json`
+      only when a body is present; `X-Request-Id` propagated when
+      the caller passes a valid ULID, otherwise a fresh one is
+      minted via the new portable `apps/admin/lib/ulid.ts` (Node +
+      Edge runtime via `crypto.getRandomValues`); empty / 204 /
+      content-length-0 / non-JSON 2xx all return `undefined`
+      cleanly; no retry inside the helper (caller-owned per ADR-029
+      D5); no request/response body logging at any level. 28 new
+      tests cover bearer attachment, token-retrieval failure,
+      cache enforcement (including the "callers cannot override"
+      type-laundered case), body / no-body content-type rules,
+      every status mapping, empty-body variants, request-id
+      generation / propagation / regeneration / error-attachment,
+      URL composition, the `server-only` top-line guard, and the
+      no-body-logging sanity. Lint + typecheck + admin tests
+      (80/80, was 52, +28) + admin build all clean. Root tests
+      670 passed (was 642, +28) with the same 4 MinIO-baseline
+      failures unrelated to this slice. **No layout, no design-
+      system components, no operator feature, no dev-token bypass;
+      access tokens stay server-side.**
+- [ ] **Next — ADR-029 step 4: operator-class layout gate.**
+      `apps/admin/app/layout.tsx` calls `requireOperatorSession()`
+      at the top; failure paths render the static `/not-operator`
+      page (AGENCY users) or redirect to `/auth/login`
+      (unauthenticated). vitest+jsdom smoke test for the
+      unauthenticated-redirect path per ADR-029 D10. The api-
+      client + session helper are now ready for this slice to
+      consume.
 - [x] **ADR-029 step 2 (2026-05-10) — Auth0 SDK install + session
       helper.** Installed `@auth0/nextjs-auth0@^4.20.0` in
       `apps/admin` only (no other workspace touched). New artefacts:

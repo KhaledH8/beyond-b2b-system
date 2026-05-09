@@ -4,9 +4,10 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 step 2 — Auth0 SDK install +
-  session helper; step 1 env scaffolding; ADR-029 accepted; ADR-027
-  V1.0 e2e flow verification + TTL/tenant hardening)
+- **Last updated:** 2026-05-10 (ADR-029 step 3 — API client; step 2
+  Auth0 SDK + session helper; step 1 env scaffolding; ADR-029
+  accepted; ADR-027 V1.0 e2e flow verification + TTL/tenant
+  hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -275,10 +276,37 @@ cover happy path, missing session, token failures, /me network /
 `cache: 'no-store'` enforcement, bearer attachment, base-URL
 composition, and the server-only top-line guard on both modules.
 
-Steps 3–7 remain: API client → operator-class layout gate →
-5 design-system components → layout v0 → README + continuity-doc
-tidy. No operator feature ships in `apps/admin` until all seven
-steps merge.
+**Step 3 (API client) shipped 2026-05-10:**
+`apps/admin/lib/api-client.ts` exports `apiFetch<T>(method, path,
+opts?)` plus a typed error hierarchy (`ApiError` base + seven
+subclasses: `ApiUnauthorizedError`, `ApiForbiddenError`,
+`ApiNotFoundError`, `ApiConflictError`, `ApiValidationError` with
+parsed `bodyJson`, `ApiServerError`, `ApiNetworkError` with
+`Error.cause`). Each error carries `requestId` for support
+correlation. Hard-coded `cache: 'no-store'` (cannot be overridden
+by callers — the option is not exposed). Bearer auto-attached via
+`getAccessToken()`; caller never passes a token. `Content-Type:
+application/json` only when a body is present. `X-Request-Id`
+propagated when the caller passes a valid ULID, otherwise a fresh
+ULID is minted; the same id rides on the outbound header and on
+every thrown `ApiError`. Empty body / 204 / `content-length: 0` /
+non-JSON 2xx all return `undefined` cleanly. No retry, no body
+logging. `apps/admin/lib/ulid.ts` adds a portable
+(Node + Edge runtime) ULID generator + `validUlid()` shared with
+the api-client. 28 new tests cover bearer attachment, token-
+retrieval failure, cache enforcement (including the "callers
+cannot override" case via type-laundered options), body / no-body
+content-type rules, every status-to-error mapping (400 / 401 /
+403 / 404 / 409 / 500 / 503 / network), 204 + content-length-0 +
+empty-body handling, request-id generate / propagate-valid /
+regenerate-invalid / attach-on-error, URL composition, the
+`server-only` top-line guard, and the no-body-logging sanity
+check.
+
+Steps 4–7 remain: operator-class layout gate → 5 design-system
+components → layout v0 → README + continuity-doc tidy. No
+operator feature ships in `apps/admin` until all seven steps
+merge.
 
 ### Rest of the design-locked surface
 
