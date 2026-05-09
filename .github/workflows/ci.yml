@@ -37,6 +37,14 @@ jobs:
       HOTELBEDS_CLIENT_KIND: fixture
       HOTELBEDS_FIXTURE_DIR: packages/testing/src/hotelbeds/fixtures
       INTERNAL_API_KEY: bb-internal-ci-key
+      # Dummy Auth0 values so AuthModule's loadAuthConfig() can
+      # construct without real tenant creds. Tests that import
+      # SearchModule → AuthModule need these to be non-empty strings.
+      # The integration tests override JwtAuthGuard and RolesGuard so
+      # these values are never used for actual JWT validation.
+      AUTH0_ISSUER_BASE_URL: https://ci.test.auth0.com/
+      AUTH0_AUDIENCE: https://api.ci.test
+      AUTH0_DEFAULT_TENANT_ID: 01ARZ3NDEKTSV4RRFFQ69G5FAV
 
     steps:
       - name: Checkout
