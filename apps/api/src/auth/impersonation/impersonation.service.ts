@@ -17,14 +17,39 @@ import {
   type ImpersonationGrantRecord,
 } from './impersonation-grant.repository';
 
+const TTL_DEFAULT_MINUTES = 30;
+const TTL_MIN_MINUTES = 5;
+const TTL_MAX_MINUTES = 240;
+
 /**
- * Default TTL for impersonation sessions (ADR-027 D3 open items).
- * The locked range is 5–240 min. This default is provisional until
- * ops/security review resolves the value; exposed as a constant so
- * it can be overridden via env without an ADR amendment.
+ * Parses and validates IMPERSONATION_TTL_MINUTES from env.
+ * Throws on non-finite or out-of-range values so invalid config
+ * crashes the process at startup rather than silently producing
+ * an unsafe TTL. Exported for unit testing.
  */
-export const IMPERSONATION_DEFAULT_TTL_MINUTES =
-  Number(process.env['IMPERSONATION_TTL_MINUTES'] ?? 60);
+export function parseTtlMinutes(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return TTL_DEFAULT_MINUTES;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `IMPERSONATION_TTL_MINUTES must be a valid number; received: "${raw}"`,
+    );
+  }
+  if (value < TTL_MIN_MINUTES || value > TTL_MAX_MINUTES) {
+    throw new Error(
+      `IMPERSONATION_TTL_MINUTES must be between ${TTL_MIN_MINUTES} and ${TTL_MAX_MINUTES}; received: ${value}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * TTL for impersonation sessions (ADR-027 D3). Default 30 min;
+ * hard bounds 5–240 min enforced at startup. Override via env.
+ */
+export const IMPERSONATION_DEFAULT_TTL_MINUTES = parseTtlMinutes(
+  process.env['IMPERSONATION_TTL_MINUTES'],
+);
 
 export interface StartImpersonationInput {
   readonly actorUserId: string;

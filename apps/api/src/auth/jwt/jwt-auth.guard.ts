@@ -111,7 +111,7 @@ export class JwtAuthGuard implements CanActivate {
       // ADR-027 D7: check for an active impersonation grant.
       const grant = await this.grantRepo.findActiveByActor(this.pool, user.id);
 
-      if (grant) {
+      if (grant && grant.tenantId === user.tenantId) {
         // Build AGENCY-shaped context so every downstream E4-B-style
         // reconciliation works transparently (ADR-027 D6).
         authContext = {
@@ -132,6 +132,18 @@ export class JwtAuthGuard implements CanActivate {
         // Stamp grant id so all audit events in this request carry it.
         setImpersonationGrantId(grant.id);
       } else {
+        if (grant) {
+          // Defense-in-depth: grant exists but belongs to a different tenant.
+          // This should never happen via normal writes; log and treat as no grant.
+          this.logger.warn(
+            {
+              grantId: grant.id,
+              grantTenantId: grant.tenantId,
+              userTenantId: user.tenantId,
+            },
+            'Impersonation grant tenant mismatch — ignoring grant',
+          );
+        }
         authContext = {
           auth0Sub: claims.auth0Sub,
           userId: user.id,

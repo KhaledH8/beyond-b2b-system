@@ -271,6 +271,36 @@ describe('JwtAuthGuard — impersonation grant lookup', () => {
     expect(ctxOnReq.impersonation).toBeUndefined();
   });
 
+  it('falls through to operator-self AuthContext when grant tenant does not match user tenant', async () => {
+    const crossTenantGrant = {
+      ...activeGrant,
+      tenantId: '01ARZ3NDEKTSV4RRFFQ69G5OTH', // different from user's TENANT_ID
+    };
+    const validator = {
+      validate: vi.fn(async () => operatorClaims()),
+    } as unknown as JwtValidatorService;
+    const sync = {
+      syncOnAuthentication: vi.fn(async () => operatorRecord()),
+    } as unknown as UserSyncService;
+    const guard = new JwtAuthGuard(
+      validator,
+      sync,
+      makeGrantRepo(crossTenantGrant),
+      makeFakePool(),
+    );
+    const { ctx, req } = makeContext('Bearer abc.def.ghi');
+
+    await guard.canActivate(ctx);
+
+    const ctxOnReq = (req as unknown as Record<symbol, unknown>)[
+      AUTH_CONTEXT_KEY
+    ] as AuthContext;
+    // Must not flip to AGENCY — treat corrupted grant as absent
+    expect(ctxOnReq.userClass).toBe('OPERATOR');
+    expect(ctxOnReq.accountId).toBeNull();
+    expect(ctxOnReq.impersonation).toBeUndefined();
+  });
+
   it('does not look up impersonation grant for AGENCY users', async () => {
     const claims: ValidatedClaims = {
       auth0Sub: 'auth0|agent1',

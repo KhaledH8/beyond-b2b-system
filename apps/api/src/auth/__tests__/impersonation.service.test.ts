@@ -5,7 +5,10 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import type { Pool, PoolClient } from '@bb/db';
-import { ImpersonationService } from '../impersonation/impersonation.service';
+import {
+  ImpersonationService,
+  parseTtlMinutes,
+} from '../impersonation/impersonation.service';
 import type { ImpersonationGrantRepository } from '../impersonation/impersonation-grant.repository';
 import type { AuditService } from '../../audit/audit.service';
 
@@ -333,5 +336,47 @@ describe('ImpersonationService.getActiveGrant', () => {
     const svc = makeService(pool, grantRepo, makeAudit());
 
     expect(await svc.getActiveGrant(ACTOR_ID)).toBeNull();
+  });
+});
+
+// ── parseTtlMinutes ──────────────────────────────────────────────────────────
+
+describe('parseTtlMinutes', () => {
+  it('M — returns 30 (default) when env is undefined', () => {
+    expect(parseTtlMinutes(undefined)).toBe(30);
+  });
+
+  it('N — returns 30 (default) when env is empty or blank string', () => {
+    expect(parseTtlMinutes('')).toBe(30);
+    expect(parseTtlMinutes('   ')).toBe(30);
+  });
+
+  it('O — returns parsed value for valid in-range numbers', () => {
+    expect(parseTtlMinutes('5')).toBe(5);
+    expect(parseTtlMinutes('60')).toBe(60);
+    expect(parseTtlMinutes('240')).toBe(240);
+  });
+
+  it('P — throws for non-numeric values', () => {
+    expect(() => parseTtlMinutes('abc')).toThrow(
+      /IMPERSONATION_TTL_MINUTES must be a valid number/,
+    );
+    expect(() => parseTtlMinutes('NaN')).toThrow();
+    expect(() => parseTtlMinutes('Infinity')).toThrow();
+  });
+
+  it('Q — throws when value is below minimum (5)', () => {
+    expect(() => parseTtlMinutes('4')).toThrow(
+      /IMPERSONATION_TTL_MINUTES must be between 5 and 240/,
+    );
+    expect(() => parseTtlMinutes('0')).toThrow();
+    expect(() => parseTtlMinutes('-10')).toThrow();
+  });
+
+  it('R — throws when value exceeds maximum (240)', () => {
+    expect(() => parseTtlMinutes('241')).toThrow(
+      /IMPERSONATION_TTL_MINUTES must be between 5 and 240/,
+    );
+    expect(() => parseTtlMinutes('999')).toThrow();
   });
 });
