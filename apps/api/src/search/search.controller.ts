@@ -55,10 +55,12 @@ import { SearchService } from './search.service';
  *       `auth.accountId`. Mismatch → 403, no detail body, reason
  *       logged at warn.
  *     - OPERATOR user: 403 with a policy message ("operator search
- *       requires impersonation; not supported in V1"). Even when the
- *       operator role holds `SEARCH_EXECUTE` (`platform_admin`), they
- *       cannot search as themselves — they have no `accountId`, and
- *       the search engine is account-scoped.
+ *       requires an active impersonation grant"). Even when the operator
+ *       role holds `SEARCH_EXECUTE` (`platform_admin`), they cannot
+ *       search as themselves — they have no `accountId`, and the search
+ *       engine is account-scoped. With ADR-027 V1.0, an active grant
+ *       flips the AuthContext to AGENCY before this branch is reached,
+ *       so the deny path fires only for operator-as-self requests.
  *
  *   Failure mode is uniformly 403, never 400. A foreign `accountId`
  *   in a well-formed body is an authorization concern (this identity
@@ -98,14 +100,16 @@ export class SearchController {
   ): Promise<SearchResponse> {
     if (auth.userClass === 'OPERATOR') {
       // The role matrix lets `platform_admin` pass `SEARCH_EXECUTE`,
-      // but operator-as-self search is unsupported in V1. The
-      // impersonation flow (E8) will produce a synthetic AGENCY-shaped
-      // AuthContext and this branch will then be skipped naturally.
+      // but operator-as-self search is disallowed: operators have no
+      // accountId and the search engine is account-scoped. ADR-027 V1.0
+      // ships impersonation; the JwtAuthGuard flips the AuthContext to
+      // AGENCY-shape when a grant is active, so this branch fires only
+      // when the operator has no active grant.
       this.logger.warn(
-        `Operator search blocked: userId=${auth.userId} (impersonation not yet supported)`,
+        `Operator search blocked: userId=${auth.userId} (active impersonation required)`,
       );
       throw new ForbiddenException(
-        'Operator search requires impersonation; not supported in V1 (ADR-026 E8)',
+        'Operator search requires an active impersonation grant (ADR-027)',
       );
     }
 

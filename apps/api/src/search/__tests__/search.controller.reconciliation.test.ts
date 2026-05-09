@@ -219,7 +219,10 @@ describe('SearchController.search — OPERATOR is denied as-self in V1', () => {
       // the caller WHY their otherwise-valid token is rejected.
       const message = (err as ForbiddenException).message;
       expect(message).toMatch(/impersonation/i);
-      expect(message).toMatch(/E8/);
+      // Message references ADR-027 (the impersonation ADR shipped V1.0
+      // 2026-05-09); the older ADR-026 E8 reference was retired with
+      // the shipping slice.
+      expect(message).toMatch(/ADR-027/);
     }
     expect(search).not.toHaveBeenCalled();
   });

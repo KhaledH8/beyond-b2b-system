@@ -4,7 +4,8 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-09 (ADR-027 V1.0 operator impersonation)
+- **Last updated:** 2026-05-10 (ADR-027 V1.0 e2e flow verification +
+  TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -93,6 +94,21 @@ rule in `CLAUDE.md` §11.
   `IMPERSONATION_STARTED / ENDED / START_REJECTED` via
   `emitInTransaction`. 24 new tests across 4 test files. Typecheck
   clean.
+- **ADR-027 V1.0 hardening (2026-05-10)** — TTL bounds enforced
+  (default 30 min, min 5 min, max 240 min; invalid env values throw
+  at startup); `JwtAuthGuard` rejects active grants whose
+  `tenantId` does not match the operator's `tenantId` (defense in
+  depth, falls through to OPERATOR-self context).
+- **ADR-027 V1.0 end-to-end backend verification (2026-05-10)** —
+  `impersonation-flow.test.ts` boots a real Nest app and drives the
+  full lifecycle through HTTP: ticketRef validation, start success,
+  active read, AGENCY-shaped `/search`, body-vs-AuthContext
+  reconciliation under impersonation, IMPERSONATION_STARTED /
+  ENDED audit emission, stop, and operator-as-self search blocked
+  after stop. 8 new tests. `SearchController` operator-block
+  message updated from "impersonation not yet supported" to
+  "active impersonation required" / "Operator search requires an
+  active impersonation grant (ADR-027)".
 
 ### FX
 - ADR-024 implemented through C5d.2:

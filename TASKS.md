@@ -10,6 +10,26 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-027 V1.0 hardening + e2e backend verification (2026-05-10)**
+      — TTL bounds enforced (default 30 min, min 5, max 240; invalid env
+      values throw at startup via `parseTtlMinutes`); `JwtAuthGuard` adds
+      defense-in-depth check that `grant.tenantId === user.tenantId` and
+      falls through to OPERATOR-self context on mismatch.
+      `impersonation-flow.test.ts` boots a real Nest app (real
+      `JwtAuthGuard` + `RolesGuard` + `PermissionResolverService` +
+      `ImpersonationService` + `ImpersonationController` + `SearchController`,
+      stateful in-memory grant repo, mocked audit + DB) and drives the
+      full HTTP lifecycle: ticketRef-required, start success +
+      IMPERSONATION_STARTED audit, GET /active, /search runs
+      AGENCY-shaped, body-vs-AuthContext mismatch still 403,
+      stop + IMPERSONATION_ENDED audit, /search after stop returns
+      403 (operator-as-self denied). 8 new tests. Migration verified
+      against local Postgres: partial unique index blocks two un-ended
+      grants for the same actor; ended-then-new is allowed.
+      `SearchController` operator-block message updated from
+      "impersonation not yet supported" to "active impersonation
+      required" / "Operator search requires an active impersonation
+      grant (ADR-027)". Lint + typecheck clean.
 - [x] **ADR-027 V1.0 — operator impersonation** — `impersonation_grant`
       migration (partial unique index, lifecycle constraints, 3 indexes);
       `ImpersonationGrantRepository` (`findActiveByActor`,
