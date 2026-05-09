@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { DatabaseModule } from '../database/database.module';
+import { AuditModule } from '../audit/audit.module';
 import { loadAuthConfig } from './auth.config';
 import { AUTH_CONFIG } from './auth.tokens';
 import { JwksCacheService } from './jwt/jwks-cache.service';
@@ -61,7 +62,7 @@ import { ImpersonationController } from './impersonation/impersonation.controlle
  *     - `ImpersonationController`       POST start, POST stop, GET active.
  */
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, AuditModule],
   controllers: [MeController, Auth0WebhookController, ImpersonationController],
   providers: [
     {
