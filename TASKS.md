@@ -10,6 +10,15 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-028 V1.0 infrastructure (steps 1–5)** — DB roles (`bb_app`,
+      `bb_audit_retention`, `bb_admin`); `audit_event` composite-partitioned
+      migration with append-only triggers, indexes, grants; `audit_pruning_log`
+      migration; `AuditService` with compile-time + runtime category enforcement
+      (`emit`/`emitInTransaction`/`emitMany`); `RequestIdMiddleware` (ULID,
+      Crockford base32 validation, X-Forwarded-For IP, AsyncLocalStorage);
+      `AuditModule` + `AppModule` wiring. 11 AuditService unit tests,
+      11 RequestIdMiddleware unit tests, 4 trigger integration tests.
+      Typecheck clean. Unblocks ADR-027 V1.0.
 - [x] **ADR-026 Slice E4-B** — body-vs-AuthContext reconciliation
       for `/search`. Closes the main remaining risk before treating
       `/search` as secure for shared use. Locked V1 rule:

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, type NestModule, type MiddlewareConsumer } from '@nestjs/common';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { ObjectStorageModule } from './object-storage/object-storage.module';
@@ -9,6 +9,8 @@ import { DirectContractsModule } from './direct-contracts/direct-contracts.modul
 import { FxModule } from './fx/fx.module';
 import { BookingModule } from './booking/booking.module';
 import { AuthModule } from './auth/auth.module';
+import { AuditModule } from './audit/audit.module';
+import { RequestIdMiddleware } from './audit/request-id.middleware';
 
 @Module({
   imports: [
@@ -22,6 +24,11 @@ import { AuthModule } from './auth/auth.module';
     FxModule,
     BookingModule,
     AuthModule,
+    AuditModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}

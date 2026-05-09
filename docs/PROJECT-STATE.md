@@ -4,7 +4,7 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-09
+- **Last updated:** 2026-05-09 (ADR-028 V1.0 steps 1–5)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -110,8 +110,26 @@ rule in `CLAUDE.md` §11.
   `/internal/suppliers/hotelbeds/search`) for adapter end-to-end
   triggering.
 
+### Audit infrastructure (ADR-028 V1.0 steps 1–5)
+
+- DB roles (`bb_app`, `bb_audit_retention`, `bb_admin`) — idempotent migration.
+- `audit_event` — composite-partitioned parent (LIST by category → RANGE by `occurred_at`);
+  5 category intermediate partitions; current+next month leaf partitions; append-only
+  triggers on parent; 5 indexes; conditional role grants.
+- `audit_pruning_log` — standalone never-pruned table; `bb_audit_retention` INSERT-only.
+- `AuditService` — compile-time + runtime category enforcement; `emit()` (APP/SECURITY,
+  best-effort, swallows errors); `emitInTransaction()` (all categories, propagates errors);
+  `emitMany()`; AsyncLocalStorage `RequestAuditContext` stamped on every INSERT.
+- `RequestIdMiddleware` — ULID per request, X-Request-Id validation, IP/UA extraction,
+  `requestContextStore.run()` wraps the entire request pipeline.
+- `AuditModule` — `@Global()`, imports `DatabaseModule`, exports `AuditService`.
+- `AppModule` — wired `AuditModule` + `RequestIdMiddleware` applied to `'*'`.
+- Tests: 11 AuditService unit tests, 11 RequestIdMiddleware unit tests, 4 trigger
+  integration tests (run after `pnpm db:migrate`; skipped when `DATABASE_URL` absent).
+
 ### Recent meaningful commits
 ```
+(ADR-028 V1.0 infra — pending commit)
 6cb791c feat(auth): gate /search and reconcile body identifiers against AuthContext   (ADR-026 E4-A + E4-B)
 0ffd997 feat(auth): add admin provisioning, webhook ingestion, and bootstrap CLI       (ADR-026 E2-B)
 e1ff071 feat(auth): add role and membership permission infrastructure                 (ADR-026 E3-A)
@@ -163,27 +181,15 @@ production.
 
 ### Audit log infrastructure (ADR-028)
 
-Locked: append-only at DB role level, three-Postgres-role separation
-(`bb_app`, `bb_audit_retention`, `bb_admin`), composite-partitioned
-`audit_event` (LIST by category, RANGE by `occurred_at`),
-`audit_pruning_log` (never-pruned), `AuditService` with category-aware
-emission split (AUTH + IMPERSONATION must be transactional; APP +
-SECURITY may be background queue), self-audited reads (`AUDIT_QUERY_*`
-events), per-category retention, `AUDIT_READ` + `AUDIT_READ_SENSITIVE`.
+**Steps 1–5 implemented (2026-05-09).** DB roles, `audit_event` table
+(composite partitioned, append-only triggers, indexes, grants),
+`audit_pruning_log`, `AuditService` (emit/emitInTransaction split,
+compile-time + runtime enforcement), `RequestIdMiddleware`
+(AsyncLocalStorage, ULID, X-Request-Id), `AuditModule` + `AppModule`
+wiring. ADR-027 V1.0 is now unblocked.
 
-**Implementation order (per ADR-028 §"Implementation order"):**
-1. DB roles and ownership.
-2. `audit_event` migration (parent + 5 category trees + monthly leaf
-   partitions).
-3. `audit_pruning_log` migration.
-4. `AuditService` skeleton with the discriminated union and the
-   `emit` / `emitInTransaction` split.
-5. Request-id middleware.
-6. ADR-027 impersonation as the first emitter.
-
-Steps 1–6 are the minimum viable set that unblocks ADR-027 V1.0.
-Steps 7–11 (read API, CLI, retention cron, backfill, sensitive-access
-table) follow.
+Still pending (steps 6–11): ADR-027 impersonation as first emitter;
+read API; CLI; retention cron; SENSITIVE_ACCESS table; backfill.
 
 ### Rest of the design-locked surface
 
@@ -228,32 +234,20 @@ formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 ## Immediate next slice
 
-**ADR-028 V1.0 infrastructure** — steps 1–6 from the ADR's
-implementation order:
+**ADR-027 V1.0** — operator impersonation (now unblocked by ADR-028 V1.0):
 
-1. DB roles + ownership (`bb_app`, `bb_audit_retention`, `bb_admin`).
-2. `audit_event` migration (composite partitioning, monthly leaf
-   creation, indexes, append-only triggers, role grants).
-3. `audit_pruning_log` migration (never-pruned, INSERT-only for
-   retention role).
-4. `AuditService` skeleton in `apps/api/src/audit/` with the
-   discriminated union and the compile-time `emit` /
-   `emitInTransaction` enforcement.
-5. Request-id middleware in `apps/api` (HTTP entry layer; ULID per
-   request; AsyncLocalStorage / Nest request scope).
-6. (No emitter yet — ADR-027 impersonation will be the first emitter
-   on the dedicated impersonation slice.)
+- `impersonation_grant` migration (DB-bound grant table; `ticket_ref` NOT NULL;
+  AGENCY-target only; one un-ended grant per actor enforced by partial unique index).
+- `OperatorImpersonationGuard` — checks `impersonation_grant` and sets
+  `impersonationGrantId` in `RequestAuditContext` via `setImpersonationGrantId()`.
+- `POST /internal/auth/impersonation` + `DELETE /internal/auth/impersonation/:id`
+  endpoints (start + end grant).
+- `IMPERSONATION_DENY_INITIAL` deny-list overlay enforced at guard level.
+- IMPERSONATION audit events via `emitInTransaction()` — the first real
+  `AuditService` emitter.
 
-This unblocks ADR-027 V1.0. After ADR-028 V1.0 ships:
-
-- ADR-027 V1.0 implementation slice (impersonation_grant table,
-  `OperatorImpersonationGuard`, start/end endpoints, deny-list overlay,
-  read-only enforcement).
-- Then **back-fill ADR-026** so the identity/role model has its own ADR
-  document.
-- Then return to the FX C5d.3 / C5d.4 / C6 / C7 follow-ups OR
-  Phase 1 follow-ups (multi-supplier search, tax/fee composition,
-  promotion-applied trace step) per priority.
+After ADR-027 V1.0 ships, return to FX C5d.3/C5d.4/C6/C7 or Phase 1 follow-ups
+(multi-supplier search, tax/fee composition) per priority.
 
 ---
 
