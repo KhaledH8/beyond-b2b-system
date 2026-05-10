@@ -10,6 +10,29 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-027 active-grant UI prep (2026-05-10) — GET
+      /impersonation/active returns target account name.**
+      Backend-only slice unblocking the future ADR-027 D11 banner.
+      New `ImpersonationGrantRepository.findActiveWithTargetByActor`
+      does an INNER JOIN of `impersonation_grant` to `core_account`
+      on `(target_account_id, tenant_id)` (defense-in-depth against
+      retroactive re-tenanting). `ImpersonationService.getActiveGrant`
+      now returns `ActiveImpersonationView | null` =
+      `{ grant: ImpersonationGrantRecord, target: { accountId,
+      accountName } } | null`. `ImpersonationController.active`
+      passes through. Hot path unchanged: `JwtAuthGuard` continues
+      to use the simpler `findActiveByActor` (no JOIN per
+      authenticated request). Tests: service test K replaced with
+      view-shape assertions; new test L2 pins that
+      `findActiveByActor` is NOT called from the UI path; controller
+      test I asserts `{ grant, target }` shape; e2e flow test step
+      3 asserts the new HTTP shape; in-memory grant repo in the
+      flow test gains `findActiveWithTargetByActor`. Start response
+      and stop response unchanged. 36/36 impersonation tests +
+      23/23 hot-path tests + 726 root passes (was 725, +1) with
+      same 4 MinIO baseline failures unrelated to this slice.
+      No UI built. No AuthContext change. No JwtAuthGuard hot-path
+      change. No new permissions. No new endpoints.
 - [x] **ADR-029 step 4 (2026-05-10) — operator-class layout gate.**
       New `apps/admin/app/(protected)/layout.tsx` calls
       `requireOperatorSession()` and maps `UnauthorizedError` →

@@ -14,8 +14,10 @@ import { getRequestContext } from '../../audit/request-context';
 import type { Queryable } from '../../database/queryable';
 import {
   ImpersonationGrantRepository,
-  type ImpersonationGrantRecord,
+  type ActiveImpersonationView,
 } from './impersonation-grant.repository';
+
+export type { ActiveImpersonationView } from './impersonation-grant.repository';
 
 const TTL_DEFAULT_MINUTES = 30;
 const TTL_MIN_MINUTES = 5;
@@ -254,13 +256,19 @@ export class ImpersonationService {
   }
 
   /**
-   * Returns the caller's current active grant or null. Used by
-   * GET /impersonation/active and by the JwtAuthGuard hot path.
+   * Returns the caller's current active grant joined to its target
+   * account name, or null. Used by GET /impersonation/active to render
+   * the ADR-027 D11 persistent banner with account name + ticket ref.
+   *
+   * The JwtAuthGuard hot path uses `grantRepo.findActiveByActor` directly
+   * (no JOIN) — it only needs the grant row to flip AuthContext. This
+   * helper exists so the controller endpoint can return the additional
+   * account-name field without changing the hot path.
    */
   async getActiveGrant(
     actorUserId: string,
-  ): Promise<ImpersonationGrantRecord | null> {
-    return this.grantRepo.findActiveByActor(this.pool, actorUserId);
+  ): Promise<ActiveImpersonationView | null> {
+    return this.grantRepo.findActiveWithTargetByActor(this.pool, actorUserId);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────

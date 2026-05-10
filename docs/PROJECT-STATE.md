@@ -111,6 +111,18 @@ rule in `CLAUDE.md` §11.
   message updated from "impersonation not yet supported" to
   "active impersonation required" / "Operator search requires an
   active impersonation grant (ADR-027)".
+- **ADR-027 active-grant UI prep (2026-05-10)** — `GET
+  /impersonation/active` response shape changed from
+  `ImpersonationGrantRecord | null` to `{ grant, target: { accountId,
+  accountName } } | null` so the future operator UI banner (ADR-027
+  D11) can render account name + ticket ref from a single call after
+  refresh. Implementation: new
+  `ImpersonationGrantRepository.findActiveWithTargetByActor` does an
+  INNER JOIN to `core_account` with `(target_account_id = a.id AND
+  tenant_id = a.tenant_id)` for defense-in-depth. The hot-path
+  `findActiveByActor` used by `JwtAuthGuard` is unchanged — no JOIN
+  added to per-request operator traffic. 36/36 impersonation tests
+  pass; 23/23 hot-path JwtAuthGuard + search-guards tests pass.
 
 ### FX
 - ADR-024 implemented through C5d.2:

@@ -139,7 +139,7 @@ describe('ImpersonationController.active', () => {
     expect(await ctrl.active(operatorAuth())).toBeNull();
   });
 
-  it('I — returns the active grant record when one exists', async () => {
+  it('I — returns { grant, target } shape when an active grant exists', async () => {
     const grantRecord = {
       id: GRANT_ID,
       tenantId: TENANT_ID,
@@ -155,12 +155,19 @@ describe('ImpersonationController.active', () => {
       ipAddress: null,
       userAgent: null,
     };
+    const view = {
+      grant: grantRecord,
+      target: { accountId: TARGET_ID, accountName: 'Acme Travel' },
+    };
     const svc = makeService({
-      getActiveGrant: vi.fn(async () => grantRecord),
+      getActiveGrant: vi.fn(async () => view),
     });
     const ctrl = new ImpersonationController(svc);
     const result = await ctrl.active(operatorAuth());
-    expect(result?.id).toBe(GRANT_ID);
-    expect(result?.targetAccountId).toBe(TARGET_ID);
+    expect(result?.grant.id).toBe(GRANT_ID);
+    expect(result?.grant.targetAccountId).toBe(TARGET_ID);
+    expect(result?.grant.ticketRef).toBe('SUP-1234');
+    expect(result?.target.accountId).toBe(TARGET_ID);
+    expect(result?.target.accountName).toBe('Acme Travel');
   });
 });

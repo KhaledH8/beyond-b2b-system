@@ -67,6 +67,22 @@ export interface InsertGrantInput {
   readonly userAgent: string | null;
 }
 
+/**
+ * Active grant joined to its target account. Returned by
+ * `findActiveWithTargetByActor` so a single round-trip yields everything
+ * the operator UI needs to render the ADR-027 D11 banner (account name +
+ * ticket ref + expiry). The hot-path JwtAuthGuard does NOT use this
+ * shape — it stays on the simpler `findActiveByActor` to avoid the JOIN
+ * cost on every authenticated request.
+ */
+export interface ActiveImpersonationView {
+  readonly grant: ImpersonationGrantRecord;
+  readonly target: {
+    readonly accountId: string;
+    readonly accountName: string;
+  };
+}
+
 const SELECT_COLS = `
   id, tenant_id, actor_user_id, target_account_id,
   reason_text, ticket_ref, scope,
@@ -95,6 +111,52 @@ export class ImpersonationGrantRepository {
     `;
     const { rows } = await q.query<ImpersonationGrantDbRow>(sql, [actorUserId]);
     return rows[0] ? rowToRecord(rows[0]) : null;
+  }
+
+  /**
+   * Same active-grant filter as `findActiveByActor`, but JOINed to
+   * `core_account` to return the target account name in one round-trip.
+   * Used only by `GET /impersonation/active` to render the ADR-027 D11
+   * banner. Defense-in-depth: the JOIN matches `core_account.tenant_id =
+   * impersonation_grant.tenant_id` so a retroactively re-tenanted account
+   * cannot leak its name into another tenant's impersonation read.
+   * Returns null if no active grant exists OR if the JOIN fails (e.g.
+   * the target account row is missing — which would be a referential
+   * integrity violation but we surface it as "no active grant" rather
+   * than a partial result).
+   */
+  async findActiveWithTargetByActor(
+    q: Queryable,
+    actorUserId: string,
+  ): Promise<ActiveImpersonationView | null> {
+    const sql = `
+      SELECT
+        g.id, g.tenant_id, g.actor_user_id, g.target_account_id,
+        g.reason_text, g.ticket_ref, g.scope,
+        g.started_at, g.expires_at, g.ended_at, g.ended_reason,
+        g.ip_address, g.user_agent,
+        a.name AS target_account_name
+      FROM impersonation_grant g
+      JOIN core_account a
+        ON a.id = g.target_account_id
+       AND a.tenant_id = g.tenant_id
+      WHERE g.actor_user_id = $1
+        AND g.ended_at IS NULL
+        AND g.expires_at > now()
+      LIMIT 1
+    `;
+    const { rows } = await q.query<
+      ImpersonationGrantDbRow & { target_account_name: string }
+    >(sql, [actorUserId]);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      grant: rowToRecord(row),
+      target: {
+        accountId: row.target_account_id,
+        accountName: row.target_account_name,
+      },
+    };
   }
 
   /**

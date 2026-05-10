@@ -13,6 +13,7 @@ import { ImpersonationController } from '../impersonation/impersonation.controll
 import { ImpersonationService } from '../impersonation/impersonation.service';
 import {
   ImpersonationGrantRepository,
+  type ActiveImpersonationView,
   type ImpersonationGrantRecord,
   type InsertGrantInput,
 } from '../impersonation/impersonation-grant.repository';
@@ -75,6 +76,23 @@ class InMemoryGrantRepo {
       }
     }
     return null;
+  }
+
+  async findActiveWithTargetByActor(
+    _q: unknown,
+    actorUserId: string,
+  ): Promise<ActiveImpersonationView | null> {
+    const grant = await this.findActiveByActor(_q, actorUserId);
+    if (!grant) return null;
+    // Mirror the production INNER JOIN against the fakePool's core_account
+    // fixture: only the single TARGET_ACCOUNT_ID is populated, named
+    // 'Acme Travel'. A grant with any other targetAccountId would not
+    // satisfy the JOIN and would surface as null.
+    if (grant.targetAccountId !== TARGET_ACCOUNT_ID) return null;
+    return {
+      grant,
+      target: { accountId: TARGET_ACCOUNT_ID, accountName: 'Acme Travel' },
+    };
   }
 
   async findUnendedByActor(_q: unknown, actorUserId: string): Promise<ImpersonationGrantRecord | null> {
@@ -376,7 +394,7 @@ describe('ADR-027 impersonation flow (HTTP end-to-end)', () => {
 
   // ── 3. Active read returns the grant ─────────────────────────────────────
 
-  it('3 — GET /impersonation/active returns 200 with the grant after start', async () => {
+  it('3 — GET /impersonation/active returns 200 with { grant, target } shape after start', async () => {
     await startImpersonation({
       targetAccountId: TARGET_ACCOUNT_ID,
       reasonText: 'Investigating',
@@ -384,9 +402,15 @@ describe('ADR-027 impersonation flow (HTTP end-to-end)', () => {
     });
     const res = await getActiveImpersonation();
     expect(res.status).toBe(200);
-    const body = await res.json() as { id: string; targetAccountId: string };
-    expect(body.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(body.targetAccountId).toBe(TARGET_ACCOUNT_ID);
+    const body = await res.json() as {
+      grant: { id: string; targetAccountId: string; ticketRef: string };
+      target: { accountId: string; accountName: string };
+    };
+    expect(body.grant.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(body.grant.targetAccountId).toBe(TARGET_ACCOUNT_ID);
+    expect(body.grant.ticketRef).toBe('SUP-2');
+    expect(body.target.accountId).toBe(TARGET_ACCOUNT_ID);
+    expect(body.target.accountName).toBe('Acme Travel');
   });
 
   // ── 4. /search runs as the target agency account during impersonation ────

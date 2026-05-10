@@ -18,7 +18,7 @@ import {
   ImpersonationService,
   type StartImpersonationResult,
 } from './impersonation.service';
-import type { ImpersonationGrantRecord } from './impersonation-grant.repository';
+import type { ActiveImpersonationView } from './impersonation-grant.repository';
 
 interface StartBody {
   targetAccountId: string;
@@ -89,17 +89,19 @@ export class ImpersonationController {
   }
 
   /**
-   * GET /impersonation/active — return the caller's active grant or null.
+   * GET /impersonation/active — return the caller's active grant joined
+   * to its target account name, or null when no session is active.
    *
-   * Used by the operator UI to decide whether to render the persistent
-   * banner (ADR-027 D11). Safe to poll; returns null when no session is
-   * active.
+   * Used by the operator UI to render the persistent banner mandated by
+   * ADR-027 D11 ("You are impersonating <Account Name> on ticket
+   * <Ticket Ref>"). The shape is `{ grant, target: { accountId,
+   * accountName } } | null`. Safe to poll.
    */
   @Get('active')
   @RequirePermission(PERMISSIONS.IMPERSONATE_AGENCY_ACCOUNT)
   async active(
     @Auth() auth: AuthContext,
-  ): Promise<ImpersonationGrantRecord | null> {
+  ): Promise<ActiveImpersonationView | null> {
     return this.service.getActiveGrant(auth.userId);
   }
 }

@@ -82,6 +82,7 @@ function makePool(accountRow: object | null = AGENCY_ACCOUNT, client?: PoolClien
 function makeGrantRepo(overrides: Partial<ImpersonationGrantRepository> = {}): ImpersonationGrantRepository {
   return {
     findActiveByActor: vi.fn(async () => null),
+    findActiveWithTargetByActor: vi.fn(async () => null),
     findUnendedByActor: vi.fn(async () => null),
     insert: vi.fn(async () => ACTIVE_GRANT),
     end: vi.fn(async () => ({ rowsUpdated: 1, grantId: GRANT_ID })),
@@ -316,26 +317,48 @@ describe('ImpersonationService.stopImpersonation', () => {
 });
 
 describe('ImpersonationService.getActiveGrant', () => {
-  it('K — delegates to grantRepo.findActiveByActor', async () => {
+  const ACTIVE_VIEW = {
+    grant: ACTIVE_GRANT,
+    target: { accountId: TARGET_ID, accountName: 'Acme Travel' },
+  };
+
+  it('K — delegates to grantRepo.findActiveWithTargetByActor and returns the joined view', async () => {
     const pool = makePool();
     const grantRepo = makeGrantRepo({
-      findActiveByActor: vi.fn(async () => ACTIVE_GRANT),
+      findActiveWithTargetByActor: vi.fn(async () => ACTIVE_VIEW),
     });
     const svc = makeService(pool, grantRepo, makeAudit());
 
-    const grant = await svc.getActiveGrant(ACTOR_ID);
-    expect(grant?.id).toBe(GRANT_ID);
-    expect(grantRepo.findActiveByActor).toHaveBeenCalledWith(pool, ACTOR_ID);
+    const view = await svc.getActiveGrant(ACTOR_ID);
+    expect(view?.grant.id).toBe(GRANT_ID);
+    expect(view?.target.accountId).toBe(TARGET_ID);
+    expect(view?.target.accountName).toBe('Acme Travel');
+    expect(grantRepo.findActiveWithTargetByActor).toHaveBeenCalledWith(
+      pool,
+      ACTOR_ID,
+    );
   });
 
   it('L — returns null when no active grant', async () => {
     const pool = makePool();
     const grantRepo = makeGrantRepo({
-      findActiveByActor: vi.fn(async () => null),
+      findActiveWithTargetByActor: vi.fn(async () => null),
     });
     const svc = makeService(pool, grantRepo, makeAudit());
 
     expect(await svc.getActiveGrant(ACTOR_ID)).toBeNull();
+  });
+
+  it('L2 — does NOT call findActiveByActor (hot path stays separate from UI path)', async () => {
+    const pool = makePool();
+    const grantRepo = makeGrantRepo({
+      findActiveByActor: vi.fn(async () => ACTIVE_GRANT),
+      findActiveWithTargetByActor: vi.fn(async () => null),
+    });
+    const svc = makeService(pool, grantRepo, makeAudit());
+
+    await svc.getActiveGrant(ACTOR_ID);
+    expect(grantRepo.findActiveByActor).not.toHaveBeenCalled();
   });
 });
 
