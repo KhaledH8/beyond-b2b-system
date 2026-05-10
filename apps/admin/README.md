@@ -3,11 +3,11 @@
 Internal operations console for Beyond Borders staff (operators).
 Next.js 15 + React 19 + App Router. Operator-only — no agency users.
 
-> **Status:** ADR-029 step 4 (operator-class layout gate). Design
-> system v0 components and the layout v0 (Header / SystemBanner
-> slot / Sidebar) ship in steps 5 and 6. The dev server boots,
-> SDK middleware mounts at `/auth/login` / `/auth/logout` /
-> `/auth/callback`, and `/` is now gated to OPERATOR users only.
+> **Status:** ADR-029 step 5 (design-system v0 components). Layout
+> v0 (Header / SystemBanner slot / Sidebar) ships in step 6. The
+> dev server boots, SDK middleware mounts at `/auth/login` /
+> `/auth/logout` / `/auth/callback`, `/` is gated to OPERATOR users
+> only, and five v0 components are ready in `components/`.
 
 ## Local development
 
@@ -245,12 +245,38 @@ Next.js 15; the rename is owed at the upgrade slice.
 - v3 → v4 migration: the SDK's `V4_MIGRATION_GUIDE.md`.
 - DPoP / multiple-audience example: the SDK's `examples/with-dpop/`.
 
+## Design-system v0 components (step 5)
+
+Five components live in [`components/`](components/):
+
+| Component | Client | Variants / props |
+|---|---|---|
+| `Button` | ✓ | `primary \| secondary \| danger \| ghost`; `sm \| md`; `disabled` |
+| `Input` | ✓ | `label` (required), `helperText`, `errorText`, `disabled` |
+| `Textarea` | ✓ | same a11y pattern as `Input` |
+| `Card` | — | optional `title` (renders `<h2>` header) |
+| `Banner` | — | `info \| warning \| danger`; `role=status/alert`; non-dismissable |
+
+All interactive components (`Button`, `Input`, `Textarea`) are marked
+`'use client'`. `Card` and `Banner` are server-compatible.
+
+A dev-only preview page lives at `/__preview` — it calls `notFound()`
+in production and is never linked from the operator navigation.
+
 ## Testing
 
-Vitest runs against `apps/admin/lib/**/*.test.ts` (and `.tsx`). The
-admin app has its own [`vitest.config.ts`](vitest.config.ts) that
-widens the include pattern from the root config (which is `src/`-
-oriented for the API).
+Vitest covers three test directories:
+
+| Pattern | What is tested |
+|---|---|
+| `lib/**/*.test.ts` | `env.ts`, `session.ts`, `api-client.ts` helpers |
+| `app/**/*.test.{ts,tsx}` | Protected layout gate, server-only boundary scan |
+| `components/**/*.test.{ts,tsx}` | DOM render tests (RTL + happy-dom), boundary scans |
+
+The admin app has its own [`vitest.config.ts`](vitest.config.ts).
+Component tests use `@testing-library/react` + `happy-dom` +
+`@testing-library/jest-dom`; the setup file is
+[`test/stubs/vitest-setup.ts`](test/stubs/vitest-setup.ts).
 
 ```bash
 pnpm --filter @bb/admin test       # run admin tests
@@ -259,9 +285,7 @@ pnpm --filter @bb/admin typecheck  # tsc --noEmit
 pnpm --filter @bb/admin build      # next build (production smoke)
 ```
 
-V0.1 uses **vitest + jsdom** for all tests, including the layout
-smoke test that comes in step 4 (ADR-029 D10). Playwright is
-deliberately deferred to the second admin UI slice.
+Playwright is deliberately deferred to the second admin UI slice.
 
 ## What this app does NOT do (yet)
 

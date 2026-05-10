@@ -33,11 +33,13 @@ export default defineConfig({
   },
   test: {
     passWithNoTests: true,
+    setupFiles: ['./test/stubs/vitest-setup.ts'],
     include: [
       'lib/**/*.{test,spec}.ts',
       'lib/**/*.{test,spec}.tsx',
       'app/**/*.{test,spec}.ts',
       'app/**/*.{test,spec}.tsx',
+      'components/**/*.{test,spec}.ts',
       'components/**/*.{test,spec}.tsx',
     ],
   },

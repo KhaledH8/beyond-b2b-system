@@ -1,3 +1,5 @@
+import './globals.css';
+
 export const metadata = {
   title: 'Beyond Borders — Admin',
   description: 'Internal operations console',

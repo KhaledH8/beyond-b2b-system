@@ -4,10 +4,11 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 step 4 — operator-class
-  layout gate; step 3 API client; step 2 Auth0 SDK + session helper;
-  step 1 env scaffolding; ADR-029 accepted; ADR-027 V1.0 e2e flow
-  verification + TTL/tenant hardening)
+- **Last updated:** 2026-05-10 (ADR-029 step 5 — design-system v0
+  components; step 4 operator-class layout gate; step 3 API client;
+  step 2 Auth0 SDK + session helper; step 1 env scaffolding;
+  ADR-029 accepted; ADR-027 V1.0 e2e flow verification +
+  TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -215,28 +216,42 @@ read API; CLI; retention cron; SENSITIVE_ACCESS table; backfill.
 
 ### Admin app foundation (ADR-029)
 
-**Accepted 2026-05-10. Step 1 implemented 2026-05-10; steps 2–7
-remain.** `apps/admin` today is a
-Next.js 15 App Router scaffold (one-line `layout.tsx`, placeholder
-home page, no auth, no API client, no design system; `packages/ui`
-is a placeholder).
+**Accepted 2026-05-10. Steps 1–5 implemented 2026-05-10; step 6
+(layout v0) and step 7 (README + doc tidy) remain.**
 
-ADR-029 locks the foundation slice that must ship before any
-operator UI feature: Auth0 Universal Login via `@auth0/nextjs-auth0`
-v4 (App Router); single `lib/session.ts` with `requireOperatorSession()`
-as the only allowed reader of session state; single `lib/api-client.ts`
-(server-side only, `cache: 'no-store'`, bearer auto-attached, typed
-error classes, no retry inside the helper); operator-only layout gate
-that 403s AGENCY users to a static page; layout v0 (Header,
-SystemBanner slot, Sidebar, main); design system v0 with five
-components in `apps/admin/components/` (`Button`, `Input`, `Textarea`,
-`Card`, `Banner`) using Tailwind + shadcn-copy approach; single-tenant
-per deployment via `BB_TENANT_ID`; no `offline_access` scope; no
-dev-token bypass; vitest+jsdom for V0.1 smoke tests (Playwright
-deferred to second admin UI slice).
+Implemented so far:
+- Step 1: env scaffolding (`lib/env.ts`, `.env.example`, 34 tests).
+- Step 2: Auth0 SDK v4 install + session helper (`lib/auth0.ts`,
+  `lib/session.ts`, `middleware.ts`, `requireOperatorSession()` with
+  typed errors; 18 tests).
+- Step 3: server-side API client (`lib/api-client.ts`, typed error
+  hierarchy, `cache: 'no-store'` hard-coded, bearer auto-attached; 28
+  tests).
+- Step 4: operator-class layout gate — `(protected)/layout.tsx` maps
+  `UnauthorizedError → /auth/login`, `NotOperatorError →
+  /not-operator`; `dynamic = 'force-dynamic'`, `revalidate = 0`;
+  static `/not-operator` 403 page outside the gate; 12 tests.
+- Step 5: Tailwind CSS v4 + five v0 components in
+  `apps/admin/components/`: `Button` (4 variants, 2 sizes, disabled),
+  `Input` (label/helper/error, a11y wired), `Textarea` (same),
+  `Card` (optional title/header), `Banner` (info/warning/danger,
+  role=status/alert); dev-only preview at `/__preview`; 24 new tests
+  (21 DOM + 3 boundary scans); admin tests 116/116, root 706/706.
 
-**This is the next frontend prerequisite before the ADR-027
-impersonation UI.** D11's persistent banner is architectural and
+ADR-029 foundation goal: Auth0 Universal Login via
+`@auth0/nextjs-auth0` v4; single `lib/session.ts` with
+`requireOperatorSession()` as the only allowed reader of session
+state; single `lib/api-client.ts` (server-side only, `cache:
+'no-store'`, bearer auto-attached, typed error classes, no retry
+inside the helper); operator-only layout gate that 403s AGENCY users
+to a static page; layout v0 (Header, SystemBanner slot, Sidebar,
+main); design system v0 with five components in
+`apps/admin/components/`; single-tenant per deployment via
+`BB_TENANT_ID`; no `offline_access` scope; no dev-token bypass.
+
+**Immediate next: step 6 (layout v0).** This is the last prerequisite
+before the ADR-027 impersonation UI. D11's persistent banner is
+architectural and
 mounts in the `<SystemBanner />` slot ADR-029 puts in place. The
 ADR-027 backend is fully shipped (V1.0 + hardening + e2e flow
 verification), so the UI slice is unblocked at the API layer; only

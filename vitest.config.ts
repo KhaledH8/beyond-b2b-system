@@ -24,6 +24,10 @@ export default defineConfig({
   },
   test: {
     passWithNoTests: true,
+    // ADR-029 step 5: component tests use @testing-library/jest-dom matchers
+    // and require happy-dom cleanup between tests. The setup file extends
+    // vitest's `expect` with the matchers and registers `afterEach(cleanup)`.
+    setupFiles: ['./apps/admin/test/stubs/vitest-setup.ts'],
     include: [
       'packages/*/src/**/*.{test,spec}.ts',
       'packages/*/*/src/**/*.{test,spec}.ts',
@@ -36,6 +40,8 @@ export default defineConfig({
       // hold the layout/page unit tests. Both .ts and .tsx are
       // picked up because some tests construct JSX fixtures.
       'apps/*/app/**/*.{test,spec}.{ts,tsx}',
+      // ADR-029 step 5: components/ holds design-system v0 components.
+      'apps/*/components/**/*.{test,spec}.{ts,tsx}',
     ],
   },
 });

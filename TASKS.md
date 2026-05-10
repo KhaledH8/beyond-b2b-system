@@ -49,12 +49,52 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
       **No design-system components, no Header/Sidebar, no
       operator features built; access tokens stay server-side
       (boundary statically asserted).**
-- [ ] **Next — ADR-029 step 5: design-system v0 components.** Five
-      components in `apps/admin/components/`: `Button`, `Input`,
-      `Textarea`, `Card`, `Banner`. Tailwind setup. `/_dev/components`
-      page gated to non-production builds for visual smoke. The
-      `<SystemBanner />` slot in step 6's layout v0 mounts
-      `<Banner severity="danger">` from this step.
+- [x] **ADR-029 step 5 (2026-05-10) — design-system v0 components.**
+      Installed Tailwind CSS v4 (`tailwindcss`, `@tailwindcss/postcss`,
+      `postcss`) in `apps/admin`; `postcss.config.mjs` uses the v4
+      single-plugin format; `app/globals.css` has `@import 'tailwindcss'`;
+      root layout imports the stylesheet. Five components created in
+      `apps/admin/components/`:
+        - `Button` (`'use client'`) — `primary | secondary | danger | ghost`
+          variants; `sm | md` sizes; disabled state; visible focus ring
+          (`focus-visible:outline-2`).
+        - `Input` (`'use client'`) — `label` (required), `helperText`,
+          `errorText`; auto-generates `id` from label; `aria-describedby`
+          wired to helper/error `<p>`; `aria-invalid` on error;
+          helper hidden when error is shown.
+        - `Textarea` (`'use client'`) — same a11y pattern as Input.
+        - `Card` (server-compatible) — optional `title` renders `<h2>`
+          header above content wrapper.
+        - `Banner` (server-compatible) — `info | warning | danger`
+          variants; `role="status"` for info, `role="alert"` for
+          warning/danger; `aria-label` reflects variant name.
+      Dev-only preview page at `app/__preview/page.tsx` calls
+      `notFound()` in production (verified: route is absent from the
+      `next build` route table in production mode, available in dev).
+      Tests: `components/__tests__/components.test.tsx` (21 DOM tests
+      A–U: renders, label association, helper/error text, disabled
+      state, banner roles/aria; uses `@testing-library/react` +
+      `happy-dom` + `@testing-library/jest-dom`);
+      `components/__tests__/component-boundaries.test.ts` (3 static
+      source scans V–X: no server-only/next-server imports,
+      interactive components declare `'use client'`). Vitest setup
+      extended: `test/stubs/vitest-setup.ts` imports matchers and
+      registers `afterEach(cleanup)`; `test/stubs/jest-dom.d.ts`
+      extends TypeScript with jest-dom types; both admin and root
+      vitest configs gain `setupFiles` pointing to the setup file;
+      root config gains `apps/*/components/**/*.{test,spec}.{ts,tsx}`
+      include. Lint + typecheck + admin tests (116/116, was 92, +24)
+      + build all clean. Root `pnpm test` 706 passed (was 682, +24)
+      with the same 4 MinIO-baseline failures unrelated to this slice.
+      **No Header/Sidebar yet. No operator features. Components stay
+      in `apps/admin/components/` (not promoted to `packages/ui`).**
+- [ ] **Next — ADR-029 step 6: layout v0.** `Header` (app name +
+      user display name + sign-out link), `<SystemBanner />` slot
+      (mounts a `<Banner variant="danger">` for any future system
+      alert), `Sidebar` (placeholder nav), and `<main>` content
+      wrapper assembled into the `(protected)/layout.tsx`. The
+      operator gate stays in the layout file; the layout simply gains
+      HTML structure around `{children}`.
 - [x] **ADR-029 step 3 (2026-05-10) — server-side API client.**
       `apps/admin/lib/api-client.ts` exports `apiFetch<T>(method,
       path, opts?)` plus a typed error hierarchy: `ApiError` base
