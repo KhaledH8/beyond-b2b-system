@@ -3,11 +3,11 @@
 Internal operations console for Beyond Borders staff (operators).
 Next.js 15 + React 19 + App Router. Operator-only — no agency users.
 
-> **Status:** ADR-029 step 3 (server-side API client). Layout,
-> design system, and operator features land in subsequent steps.
-> The dev server boots, the SDK middleware mounts at `/auth/login`,
-> `/auth/logout`, `/auth/callback`, and the api-client + session
-> helper are ready for the layout-level operator gate (step 4).
+> **Status:** ADR-029 step 4 (operator-class layout gate). Design
+> system v0 components and the layout v0 (Header / SystemBanner
+> slot / Sidebar) ship in steps 5 and 6. The dev server boots,
+> SDK middleware mounts at `/auth/login` / `/auth/logout` /
+> `/auth/callback`, and `/` is now gated to OPERATOR users only.
 
 ## Local development
 
@@ -188,6 +188,47 @@ try {
   throw err;
 }
 ```
+
+### Layout gate (step 4)
+
+The protected route-group layout is the single chokepoint for
+operator-class enforcement (ADR-029 D4).
+
+```
+apps/admin/app/
+  layout.tsx              ← root: html/body only, no gate
+  not-operator/
+    page.tsx              ← public 403 (outside the gate)
+  (protected)/
+    layout.tsx            ← requireOperatorSession() + redirects
+    page.tsx              ← admin home (URL: /)
+```
+
+The `(protected)/` route group is invisible in URLs, so
+`(protected)/page.tsx` still serves `/`. The home page and every
+future authenticated page lives under `(protected)/` so it inherits
+the gate without each page calling the session helper itself.
+
+`(protected)/layout.tsx` exports `dynamic = 'force-dynamic'` and
+`revalidate = 0`. ADR-029 D6: an operator-class check must never
+be served from a stale render. The `next build` route table
+confirms this — `/` shows as `ƒ (Dynamic)`, `/not-operator` and
+`/_not-found` show as `○ (Static)`.
+
+Error mapping inside the gate:
+
+| Thrown by `requireOperatorSession()` | Outcome |
+|---|---|
+| `UnauthorizedError` | `redirect('/auth/login')` (SDK Universal Login) |
+| `NotOperatorError` | `redirect('/not-operator')` (static 403) |
+| `SessionApiError` (5xx / network) | rethrow — Next renders its default error UI; the requestId on the error correlates with backend logs |
+| any other error | rethrow |
+
+The `/not-operator` page lives outside the gate so an authenticated
+AGENCY user can see why they were rejected without a redirect loop.
+The user-facing copy does not distinguish "you're agency" from
+"you're operator without a role" — the audit trail records the
+difference.
 
 ### Note for Next.js 16
 

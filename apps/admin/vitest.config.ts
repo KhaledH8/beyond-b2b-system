@@ -24,6 +24,13 @@ export default defineConfig({
       ),
     },
   },
+  // Use the React automatic JSX runtime so `<>...</>` and JSX in
+  // server-component sources don't require `import React from 'react'`
+  // (Next 15's compiler does the same in production).
+  esbuild: {
+    jsx: 'automatic',
+    jsxImportSource: 'react',
+  },
   test: {
     passWithNoTests: true,
     include: [

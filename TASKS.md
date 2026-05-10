@@ -10,6 +10,51 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-029 step 4 (2026-05-10) — operator-class layout gate.**
+      New `apps/admin/app/(protected)/layout.tsx` calls
+      `requireOperatorSession()` and maps `UnauthorizedError` →
+      `redirect('/auth/login')`, `NotOperatorError` →
+      `redirect('/not-operator')`, anything else rethrows for Next's
+      default error UI. Exports `dynamic = 'force-dynamic'` and
+      `revalidate = 0` (ADR-029 D6: an operator-class check must
+      never be served from a stale render). Home page moved
+      `apps/admin/app/page.tsx` → `apps/admin/app/(protected)/page.tsx`
+      via `git mv` so it inherits the gate; URL stays `/`. New
+      home renders `Signed in as <displayName | email | auth0Sub>`
+      via a second `requireOperatorSession()` call (ADR-029 D3
+      latency tradeoff accepted). New public-shape
+      `apps/admin/app/not-operator/page.tsx` renders the static
+      403 with a `Sign out` link. Root `apps/admin/app/layout.tsx`
+      stays minimal (html/body) so SDK-mounted `/auth/*` routes
+      and `/not-operator` render without the gate. `next build`
+      route table confirms: `/` is `ƒ` (Dynamic), `/not-operator`
+      + `/_not-found` are `○` (Static). New tests:
+      `apps/admin/app/__tests__/protected-layout.test.ts` (8 tests:
+      `dynamic` + `revalidate` exports, success render, redirects
+      on Unauthorized + NotOperator, rethrow on SessionApiError +
+      unexpected, single-call invariant) using `vi.hoisted` shared
+      state and a `RedirectSentinel` mock for `next/navigation`;
+      `apps/admin/app/__tests__/server-only-boundary.test.ts`
+      (4 tests: static-source scan that no `'use client'` file in
+      `app/` or `components/` imports `lib/session` / `lib/auth0` /
+      `lib/api-client`, and that all three modules start with
+      `import 'server-only';`). Vitest configs (admin + root)
+      gained `esbuild.jsx = 'automatic'` so JSX in App-Router
+      sources transforms cleanly under tests; root vitest include
+      extended to `apps/*/app/**/*.{test,spec}.{ts,tsx}` so CI
+      runs the layout + boundary tests. Lint + typecheck + admin
+      tests (92/92, was 80, +12) + admin build all clean. Root
+      `pnpm test` 682 passed (was 670, +12) with the same 4
+      MinIO-baseline failures unrelated to this slice.
+      **No design-system components, no Header/Sidebar, no
+      operator features built; access tokens stay server-side
+      (boundary statically asserted).**
+- [ ] **Next — ADR-029 step 5: design-system v0 components.** Five
+      components in `apps/admin/components/`: `Button`, `Input`,
+      `Textarea`, `Card`, `Banner`. Tailwind setup. `/_dev/components`
+      page gated to non-production builds for visual smoke. The
+      `<SystemBanner />` slot in step 6's layout v0 mounts
+      `<Banner severity="danger">` from this step.
 - [x] **ADR-029 step 3 (2026-05-10) — server-side API client.**
       `apps/admin/lib/api-client.ts` exports `apiFetch<T>(method,
       path, opts?)` plus a typed error hierarchy: `ApiError` base

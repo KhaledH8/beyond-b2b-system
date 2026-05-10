@@ -4,10 +4,10 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 step 3 — API client; step 2
-  Auth0 SDK + session helper; step 1 env scaffolding; ADR-029
-  accepted; ADR-027 V1.0 e2e flow verification + TTL/tenant
-  hardening)
+- **Last updated:** 2026-05-10 (ADR-029 step 4 — operator-class
+  layout gate; step 3 API client; step 2 Auth0 SDK + session helper;
+  step 1 env scaffolding; ADR-029 accepted; ADR-027 V1.0 e2e flow
+  verification + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -303,8 +303,32 @@ regenerate-invalid / attach-on-error, URL composition, the
 `server-only` top-line guard, and the no-body-logging sanity
 check.
 
-Steps 4–7 remain: operator-class layout gate → 5 design-system
-components → layout v0 → README + continuity-doc tidy. No
+**Step 4 (operator-class layout gate) shipped 2026-05-10:** new
+`apps/admin/app/(protected)/layout.tsx` calls
+`requireOperatorSession()` and maps `UnauthorizedError` →
+`redirect('/auth/login')`, `NotOperatorError` →
+`redirect('/not-operator')`, anything else rethrows. Exports
+`dynamic = 'force-dynamic'` and `revalidate = 0` so Next never
+serves a stale operator-class check (ADR-029 D6). The home page
+moved from `app/page.tsx` to `app/(protected)/page.tsx` so it
+inherits the gate via the route group; the URL stays `/`. New
+public-shape `app/not-operator/page.tsx` renders the static 403.
+The root `app/layout.tsx` stays minimal (html/body only) so the
+SDK-mounted `/auth/*` routes and `/not-operator` render without
+the gate. `next build` route table confirms: `/` is `ƒ` Dynamic,
+`/not-operator` + `/_not-found` are `○` Static. Static-source
+boundary scan (`apps/admin/app/__tests__/server-only-boundary.test.ts`)
+asserts no `'use client'` file in `app/` or `components/`
+imports `lib/session` / `lib/auth0` / `lib/api-client`, and that
+all three modules start with `import 'server-only';`. 12 new
+tests (8 layout-gate + 4 boundary). Vitest configs (admin + root)
+gained `esbuild.jsx = 'automatic'` so JSX in App-Router source
+files transforms cleanly under tests; root vitest include
+extended to `apps/*/app/**/*.{test,spec}.{ts,tsx}` so CI runs
+the layout/boundary tests.
+
+Steps 5–7 remain: 5 design-system components → layout v0 (Header,
+SystemBanner slot, Sidebar) → README + continuity-doc tidy. No
 operator feature ships in `apps/admin` until all seven steps
 merge.
 
