@@ -72,7 +72,7 @@ Status legend:
 
 | ADR | Title | Status | Controls | Depends on |
 |---|---|---|---|---|
-| ADR-029 | Admin app foundation — auth, session, API client, layout, design system v0 | Accepted (no code yet) | Auth0 Universal Login via `@auth0/nextjs-auth0`; single `lib/session.ts` with `requireOperatorSession()`; single `lib/api-client.ts` (no-store, bearer auto-attached, typed error classes, no retry); operator-only layout gate; Tailwind + shadcn-copy 5-component v0 (`Button`, `Input`, `Textarea`, `Card`, `Banner`); single-tenant per deployment; vitest+jsdom for V0.1; no `offline_access`; no dev-token bypass. | ADR-007, ADR-011, ADR-026, ADR-027 |
+| ADR-029 | Admin app foundation — auth, session, API client, layout, design system v0 | Accepted (implemented 2026-05-10) | Auth0 Universal Login via `@auth0/nextjs-auth0`; single `lib/session.ts` with `requireOperatorSession()`; single `lib/api-client.ts` (no-store, bearer auto-attached, typed error classes, no retry); operator-only layout gate; Tailwind + shadcn-copy 5-component v0 (`Button`, `Input`, `Textarea`, `Card`, `Banner`); single-tenant per deployment; vitest+jsdom for V0.1; no `offline_access`; no dev-token bypass. | ADR-007, ADR-011, ADR-026, ADR-027 |
 
 ---
 

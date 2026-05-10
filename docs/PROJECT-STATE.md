@@ -160,7 +160,17 @@ rule in `CLAUDE.md` §11.
 
 ### Recent meaningful commits
 ```
-(ADR-028 V1.0 infra — pending commit)
+2f74d06 feat(admin): add ADR-029 layout v0                                            (ADR-029 step 6)
+b589d19 feat(admin): add ADR-029 design system v0                                     (ADR-029 step 5)
+3942aa2 feat(admin): add ADR-029 operator layout gate                                 (ADR-029 step 4)
+d3f0e8e feat(admin): add ADR-029 API client helper                                    (ADR-029 step 3)
+f4e00d1 feat(admin): add ADR-029 Auth0 session helper                                 (ADR-029 step 2)
+bfc0068 feat(admin): add ADR-029 env scaffolding                                      (ADR-029 step 1)
+64467a4 docs: accept ADR-029 admin app foundation
+4221b73 fix(auth): wire AuditModule into AuthModule                                   (ADR-028 V1.0)
+488b8fd test(auth): add ADR-027 impersonation HTTP end-to-end flow test               (ADR-027 V1.0)
+a6d911c fix(auth): harden impersonation TTL and tenant checks                         (ADR-027 V1.0)
+bd0ff80 feat(auth): add operator impersonation V1.0                                   (ADR-027 V1.0)
 6cb791c feat(auth): gate /search and reconcile body identifiers against AuthContext   (ADR-026 E4-A + E4-B)
 0ffd997 feat(auth): add admin provisioning, webhook ingestion, and bootstrap CLI       (ADR-026 E2-B)
 e1ff071 feat(auth): add role and membership permission infrastructure                 (ADR-026 E3-A)
@@ -215,8 +225,8 @@ read API; CLI; retention cron; SENSITIVE_ACCESS table; backfill.
 
 ### Admin app foundation (ADR-029)
 
-**Accepted 2026-05-10. Steps 1–6 implemented 2026-05-10; step 7
-(README + doc tidy) remains.**
+**Accepted 2026-05-10. All 7 steps implemented 2026-05-10. Foundation
+complete. ADR-027 impersonation UI is now unblocked.**
 
 Implemented so far:
 - Step 1: env scaffolding (`lib/env.ts`, `.env.example`, 34 tests).
@@ -246,6 +256,14 @@ Implemented so far:
   the sole landmark). 19 new tests (18 DOM A–R + boundary test Y);
   admin tests 135/135, root 725/725. `next build`: `/` = ƒ Dynamic,
   `/not-operator` = ○ Static.
+- Step 7: README + continuity-doc tidy — `apps/admin/README.md`
+  verified accurate for all steps; ADR-029 status updated to
+  `Accepted (implemented 2026-05-10)` in
+  `docs/adrs/ADR-029-admin-app-foundation.md`,
+  `docs/adrs/INDEX.md`, and `docs/product/capability-catalog.md`;
+  D8 Auth0 config block corrected to v4 paths (`/auth/callback`,
+  `APP_BASE_URL`). Foundation is complete; ADR-027 impersonation
+  UI is now unblocked.
 
 ADR-029 foundation goal: Auth0 Universal Login via
 `@auth0/nextjs-auth0` v4; single `lib/session.ts` with
@@ -258,13 +276,12 @@ main); design system v0 with five components in
 `apps/admin/components/`; single-tenant per deployment via
 `BB_TENANT_ID`; no `offline_access` scope; no dev-token bypass.
 
-**Immediate next: step 6 (layout v0).** This is the last prerequisite
-before the ADR-027 impersonation UI. D11's persistent banner is
-architectural and
-mounts in the `<SystemBanner />` slot ADR-029 puts in place. The
-ADR-027 backend is fully shipped (V1.0 + hardening + e2e flow
-verification), so the UI slice is unblocked at the API layer; only
-the foundation needs to land first.
+**All 7 steps complete (2026-05-10). ADR-029 foundation is
+implemented.** The ADR-027 impersonation UI is the immediate next
+frontend slice and is now unblocked. D11's persistent banner mounts
+in the `<SystemBanner />` slot that step 6 put in place; the ADR-027
+backend (V1.0 + TTL hardening + e2e flow verification) is fully
+shipped.
 
 Implementation order (per ADR-029): env scaffolding → Auth0 SDK +
 session helper → API client → operator-class layout gate → 5 design-
@@ -351,10 +368,8 @@ files transforms cleanly under tests; root vitest include
 extended to `apps/*/app/**/*.{test,spec}.{ts,tsx}` so CI runs
 the layout/boundary tests.
 
-Steps 5–7 remain: 5 design-system components → layout v0 (Header,
-SystemBanner slot, Sidebar) → README + continuity-doc tidy. No
-operator feature ships in `apps/admin` until all seven steps
-merge.
+**All 7 steps merged as of 2026-05-10.** ADR-029 foundation is
+complete. The ADR-027 impersonation UI slice may now begin.
 
 ### Rest of the design-locked surface
 
@@ -401,10 +416,12 @@ formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 Three candidate slices, picked by priority call:
 
-- **ADR-029 admin app foundation** — frontend track. Unblocks the
-  ADR-027 D11 impersonation banner and every future operator UI
-  (audit views, role grants, provisioning). No operator feature
-  ships in `apps/admin` until this lands.
+- **ADR-027 impersonation UI** — frontend track. First feature slice
+  on top of the ADR-029 foundation (complete). Persistent
+  `<Banner variant="danger">` in the `<SystemBanner />` slot on
+  every operator page; start/stop/active page at
+  `apps/admin/app/impersonation/`. ADR-027 backend is fully shipped
+  (V1.0 + TTL hardening + e2e verification). This is now unblocked.
 - **ADR-028 V1.0 steps 6–11** — backend track. Audit read API, CLI,
   retention cron, SENSITIVE_ACCESS table, backfill.
 - **FX C5d.3 / C5d.4 / C6 / C7** — backend track. Remaining FX work

@@ -1,6 +1,6 @@
 # ADR-029: Admin app foundation — auth, session, API client, layout, and design system v0
 
-- **Status:** Accepted
+- **Status:** Accepted (implemented 2026-05-10; all 7 steps complete)
 - **Date:** 2026-05-10
 - **Supersedes:** nothing
 - **Amends:** nothing (additive — fills the operator-UI hole the
@@ -353,9 +353,9 @@ assumption.
 Auth0 application configuration (managed in the Auth0 console, not
 in code):
 
-- **Allowed Callback URLs:** `${AUTH0_BASE_URL}/api/auth/callback`
-- **Allowed Logout URLs:** `${AUTH0_BASE_URL}`
-- **Allowed Web Origins:** `${AUTH0_BASE_URL}`
+- **Allowed Callback URLs:** `${APP_BASE_URL}/auth/callback`
+- **Allowed Logout URLs:** `${APP_BASE_URL}`
+- **Allowed Web Origins:** `${APP_BASE_URL}`
 - **Application type:** Regular Web Application (not SPA)
 - **Token Endpoint Authentication Method:** `client_secret_post`
   (matches v4 SDK default)

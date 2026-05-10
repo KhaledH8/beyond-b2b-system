@@ -119,10 +119,32 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
       `/not-operator` = ○ Static). Root `pnpm test` 725 passed (was
       706, +19) with the same 4 MinIO-baseline failures.
       **No impersonation UI. No role-management. No agency portal.**
-- [ ] **Next — ADR-029 step 7: README + doc tidy.** Verify
-      `apps/admin/README.md` accurately reflects steps 1–6 as
-      complete; ensure `docs/PROJECT-STATE.md` and `TASKS.md` are
-      fully consistent with the shipped state. No new code.
+- [x] **ADR-029 step 7 (2026-05-10) — README + continuity-doc tidy.**
+      `apps/admin/README.md` status line updated to "foundation
+      complete (all 7 steps)". ADR-029 implementation status
+      propagated to: `docs/adrs/ADR-029-admin-app-foundation.md`
+      (Status → `Accepted (implemented 2026-05-10)`; D8 Auth0 config
+      block corrected to v4 paths: `/auth/callback`, `APP_BASE_URL`);
+      `docs/adrs/INDEX.md` (row → `Accepted (implemented 2026-05-10)`);
+      `docs/product/capability-catalog.md` (admin foundation row →
+      `implemented`, operator impersonation UI description updated to
+      reflect ADR-029 is complete and this is the immediate next
+      slice). `docs/PROJECT-STATE.md` ADR-029 section body updated
+      (all-7-complete summary, step 7 entry added, stale "step 6
+      next" text replaced, recent commits refreshed). `TASKS.md`
+      updated with next slice. No source code changes. Admin tests
+      still 135/135, root 725/725 with same 4 MinIO-baseline
+      failures.
+      **ADR-029 foundation is fully implemented. ADR-027
+      impersonation UI is now unblocked.**
+- [ ] **Next — ADR-027 impersonation UI.** First feature slice on
+      top of the ADR-029 foundation. Scope per ADR-027 D10/D11:
+      persistent `<Banner variant="danger">` in the `<SystemBanner />`
+      slot on every authenticated operator page; start/stop/active
+      page at `apps/admin/app/impersonation/`. ADR-027 backend is
+      fully shipped. Strictly blocked on ADR-029 step 7 merging
+      (done). ADR-029 D1: no operator feature ships until step 7
+      merges — that gate is now cleared.
 - [x] **ADR-029 step 3 (2026-05-10) — server-side API client.**
       `apps/admin/lib/api-client.ts` exports `apiFetch<T>(method,
       path, opts?)` plus a typed error hierarchy: `ApiError` base

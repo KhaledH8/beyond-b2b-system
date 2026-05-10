@@ -3,8 +3,7 @@
 Internal operations console for Beyond Borders staff (operators).
 Next.js 15 + React 19 + App Router. Operator-only — no agency users.
 
-> **Status:** ADR-029 step 6 (layout v0). Steps 1–6 are complete;
-> step 7 is a README + doc tidy. The dev server boots, SDK
+> **Status:** ADR-029 complete (all 7 steps shipped 2026-05-10). The dev server boots, SDK
 > middleware mounts at `/auth/login` / `/auth/logout` /
 > `/auth/callback`, `/` is gated to OPERATOR users only, and the
 > admin shell (Header / SystemBanner slot / Sidebar / main) is
