@@ -88,13 +88,41 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
       with the same 4 MinIO-baseline failures unrelated to this slice.
       **No Header/Sidebar yet. No operator features. Components stay
       in `apps/admin/components/` (not promoted to `packages/ui`).**
-- [ ] **Next — ADR-029 step 6: layout v0.** `Header` (app name +
-      user display name + sign-out link), `<SystemBanner />` slot
-      (mounts a `<Banner variant="danger">` for any future system
-      alert), `Sidebar` (placeholder nav), and `<main>` content
-      wrapper assembled into the `(protected)/layout.tsx`. The
-      operator gate stays in the layout file; the layout simply gains
-      HTML structure around `{children}`.
+- [x] **ADR-029 step 6 (2026-05-10) — layout v0.** Four server-compatible
+      layout components created in `apps/admin/components/`:
+        - `AdminShell` — top-level wrapper: `<SystemBanner />` →
+          `<Header />` → `<aside><Sidebar /></aside>` + `<main>`.
+          Accepts `displayName: string` and `children`.
+        - `Header` — `<header>` landmark; "Beyond Borders / Admin"
+          label; operator display name; "Sign out" anchor to
+          `/auth/logout`; optional `actions` slot.
+        - `Sidebar` — `<aside>` containing `<nav aria-label="Main
+          navigation">` with a single Home link to `/`.
+        - `SystemBanner` — renders `null` (empty slot; ADR-027
+          impersonation alert mounts here in a later slice).
+      `(protected)/layout.tsx` updated: resolves `displayName`
+      (`name ?? email ?? auth0Sub`) from the typed identity and
+      wraps `{children}` in `<AdminShell displayName={displayName}>`.
+      No tokens reach the shell or any child component.
+      `(protected)/page.tsx` updated: removed its own `<main>` wrapper
+      (AdminShell now owns the sole `<main>` landmark; nested `<main>`
+      is invalid HTML).
+      Boundary test Y added: `component-boundaries.test.ts` asserts
+      that `AdminShell`, `Header`, `Sidebar`, `SystemBanner` do NOT
+      start with `'use client'` (server-component invariant).
+      18 DOM tests A–R added in
+      `components/__tests__/layout-components.test.tsx` (Header labels,
+      Sidebar nav landmark + Home link, SystemBanner null render,
+      AdminShell banner/nav/main landmarks + children-in-main +
+      sign-out/Home link assertions). Lint + typecheck + admin tests
+      (135/135, was 116, +19) + build clean (`/` = ƒ Dynamic,
+      `/not-operator` = ○ Static). Root `pnpm test` 725 passed (was
+      706, +19) with the same 4 MinIO-baseline failures.
+      **No impersonation UI. No role-management. No agency portal.**
+- [ ] **Next — ADR-029 step 7: README + doc tidy.** Verify
+      `apps/admin/README.md` accurately reflects steps 1–6 as
+      complete; ensure `docs/PROJECT-STATE.md` and `TASKS.md` are
+      fully consistent with the shipped state. No new code.
 - [x] **ADR-029 step 3 (2026-05-10) — server-side API client.**
       `apps/admin/lib/api-client.ts` exports `apiFetch<T>(method,
       path, opts?)` plus a typed error hierarchy: `ApiError` base

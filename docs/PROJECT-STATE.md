@@ -4,11 +4,10 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 step 5 — design-system v0
-  components; step 4 operator-class layout gate; step 3 API client;
-  step 2 Auth0 SDK + session helper; step 1 env scaffolding;
-  ADR-029 accepted; ADR-027 V1.0 e2e flow verification +
-  TTL/tenant hardening)
+- **Last updated:** 2026-05-10 (ADR-029 step 6 — layout v0; step 5
+  design-system v0; step 4 operator-class layout gate; steps 1–3
+  env/Auth0/API-client; ADR-029 accepted; ADR-027 V1.0 e2e flow
+  verification + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -216,8 +215,8 @@ read API; CLI; retention cron; SENSITIVE_ACCESS table; backfill.
 
 ### Admin app foundation (ADR-029)
 
-**Accepted 2026-05-10. Steps 1–5 implemented 2026-05-10; step 6
-(layout v0) and step 7 (README + doc tidy) remain.**
+**Accepted 2026-05-10. Steps 1–6 implemented 2026-05-10; step 7
+(README + doc tidy) remains.**
 
 Implemented so far:
 - Step 1: env scaffolding (`lib/env.ts`, `.env.example`, 34 tests).
@@ -237,6 +236,16 @@ Implemented so far:
   `Card` (optional title/header), `Banner` (info/warning/danger,
   role=status/alert); dev-only preview at `/__preview`; 24 new tests
   (21 DOM + 3 boundary scans); admin tests 116/116, root 706/706.
+- Step 6: layout v0 — four server-compatible layout components:
+  `AdminShell` (top-level wrapper), `Header` (app name + displayName
+  + sign-out link), `Sidebar` (nav landmark with Home link),
+  `SystemBanner` (null slot for future ADR-027 impersonation alert).
+  `(protected)/layout.tsx` resolves `displayName` from session and
+  wraps children in `AdminShell`; no tokens reach child components.
+  `(protected)/page.tsx` `<main>` wrapper removed (AdminShell owns
+  the sole landmark). 19 new tests (18 DOM A–R + boundary test Y);
+  admin tests 135/135, root 725/725. `next build`: `/` = ƒ Dynamic,
+  `/not-operator` = ○ Static.
 
 ADR-029 foundation goal: Auth0 Universal Login via
 `@auth0/nextjs-auth0` v4; single `lib/session.ts` with

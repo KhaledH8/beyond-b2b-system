@@ -3,11 +3,12 @@
 Internal operations console for Beyond Borders staff (operators).
 Next.js 15 + React 19 + App Router. Operator-only — no agency users.
 
-> **Status:** ADR-029 step 5 (design-system v0 components). Layout
-> v0 (Header / SystemBanner slot / Sidebar) ships in step 6. The
-> dev server boots, SDK middleware mounts at `/auth/login` /
-> `/auth/logout` / `/auth/callback`, `/` is gated to OPERATOR users
-> only, and five v0 components are ready in `components/`.
+> **Status:** ADR-029 step 6 (layout v0). Steps 1–6 are complete;
+> step 7 is a README + doc tidy. The dev server boots, SDK
+> middleware mounts at `/auth/login` / `/auth/logout` /
+> `/auth/callback`, `/` is gated to OPERATOR users only, and the
+> admin shell (Header / SystemBanner slot / Sidebar / main) is
+> rendered on every authenticated page.
 
 ## Local development
 
@@ -247,7 +248,7 @@ Next.js 15; the rename is owed at the upgrade slice.
 
 ## Design-system v0 components (step 5)
 
-Five components live in [`components/`](components/):
+Five primitive components live in [`components/`](components/):
 
 | Component | Client | Variants / props |
 |---|---|---|
@@ -262,6 +263,19 @@ All interactive components (`Button`, `Input`, `Textarea`) are marked
 
 A dev-only preview page lives at `/__preview` — it calls `notFound()`
 in production and is never linked from the operator navigation.
+
+## Layout v0 (step 6)
+
+Four server-compatible layout components in [`components/`](components/):
+
+| Component | Purpose |
+|---|---|
+| `AdminShell` | Top-level wrapper — SystemBanner → Header → (Sidebar + main) |
+| `Header` | App name, operator `displayName`, sign-out link (`/auth/logout`) |
+| `Sidebar` | `<nav aria-label="Main navigation">` — Home link only for now |
+| `SystemBanner` | Empty slot; ADR-027 impersonation alert will mount here |
+
+`AdminShell` accepts `displayName: string` (resolved from `name ?? email ?? auth0Sub` in the protected layout — never a token). The `(protected)/layout.tsx` calls `requireOperatorSession()`, extracts the safe display string, and passes it down. No tokens reach the shell or any child component.
 
 ## Testing
 

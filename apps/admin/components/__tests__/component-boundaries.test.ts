@@ -81,4 +81,25 @@ describe('Component boundary — no server-only imports', () => {
       }
     }
   });
+
+  it('Y — server layout components must not declare "use client"', async () => {
+    // ADR-029 step 6: these components are server-compatible. Marking
+    // them 'use client' would push the entire shell into the client
+    // bundle and break the server-component data-fetch pattern.
+    const SERVER_LAYOUT = [
+      'AdminShell.tsx',
+      'Header.tsx',
+      'Sidebar.tsx',
+      'SystemBanner.tsx',
+    ];
+    const sources = await readComponentSources();
+    for (const { file, content } of sources) {
+      if (SERVER_LAYOUT.includes(file)) {
+        expect(
+          content.trimStart().startsWith("'use client'"),
+          `${file} must NOT start with 'use client' — it is a server component`,
+        ).toBe(false);
+      }
+    }
+  });
 });
