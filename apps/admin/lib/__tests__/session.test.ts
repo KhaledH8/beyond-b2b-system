@@ -5,6 +5,7 @@ import {
   SessionApiError,
   UnauthorizedError,
   requireOperatorSession,
+  type MeImpersonationBlock,
   type MeResponse,
   type RequireOperatorSessionOverrides,
 } from '../session';
@@ -293,6 +294,135 @@ describe('requireOperatorSession — request shape', () => {
       'https://api.example.test/me',
       expect.any(Object),
     );
+  });
+});
+
+// ── ADR-029 D4 amendment: impersonation carve-out ─────────────────────
+
+describe('requireOperatorSession — impersonation carve-out (ADR-029 D4 amendment)', () => {
+  const VALID_IMPERSONATION: MeImpersonationBlock = {
+    grantId: '01ARZ3NDEKTSV4RRFFQ69G5GRA',
+    actorUserId: VALID_ME.userId,
+    actorAuth0Sub: VALID_ME.auth0Sub,
+    actorUserClass: 'OPERATOR',
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    scope: 'READ_ONLY',
+  };
+
+  function makeImpersonatingMe(
+    impersonation: unknown = VALID_IMPERSONATION,
+  ): MeResponse {
+    return {
+      ...VALID_ME,
+      userClass: 'AGENCY',
+      accountId: '01ARZ3NDEKTSV4RRFFQ69G5TGT',
+      impersonation: impersonation as MeImpersonationBlock | undefined,
+    };
+  }
+
+  it('S — accepts AGENCY-shaped /me with valid OPERATOR impersonation block', async () => {
+    const id = await requireOperatorSession(
+      defaultOverrides({
+        fetch: makeFetch({ status: 200, body: makeImpersonatingMe() })
+          .fn as unknown as typeof fetch,
+      }),
+    );
+    expect(id.userId).toBe(VALID_ME.userId);
+    expect(id.impersonation).toEqual({
+      grantId: VALID_IMPERSONATION.grantId,
+      expiresAt: VALID_IMPERSONATION.expiresAt,
+      scope: 'READ_ONLY',
+    });
+  });
+
+  it('T — OperatorIdentity.impersonation is undefined for normal OPERATOR', async () => {
+    const id = await requireOperatorSession(defaultOverrides());
+    expect(id.impersonation).toBeUndefined();
+  });
+
+  it('U — rejects AGENCY-shaped /me with NO impersonation block', async () => {
+    await expect(
+      requireOperatorSession(
+        defaultOverrides({
+          fetch: makeFetch({
+            status: 200,
+            body: { ...VALID_ME, userClass: 'AGENCY', accountId: '01ARZ3NDEKTSV4RRFFQ69G5ACC' },
+          }).fn as unknown as typeof fetch,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotOperatorError);
+  });
+
+  it('V — rejects AGENCY with impersonation.actorUserClass="AGENCY" (not OPERATOR)', async () => {
+    const tampered = { ...VALID_IMPERSONATION, actorUserClass: 'AGENCY' };
+    await expect(
+      requireOperatorSession(
+        defaultOverrides({
+          fetch: makeFetch({ status: 200, body: makeImpersonatingMe(tampered) })
+            .fn as unknown as typeof fetch,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotOperatorError);
+  });
+
+  it('W — rejects AGENCY with impersonation block missing grantId', async () => {
+    const malformed = { ...VALID_IMPERSONATION, grantId: '' };
+    await expect(
+      requireOperatorSession(
+        defaultOverrides({
+          fetch: makeFetch({ status: 200, body: makeImpersonatingMe(malformed) })
+            .fn as unknown as typeof fetch,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotOperatorError);
+  });
+
+  it('X — rejects AGENCY with impersonation.scope!="READ_ONLY"', async () => {
+    const tampered = { ...VALID_IMPERSONATION, scope: 'READ_WRITE' };
+    await expect(
+      requireOperatorSession(
+        defaultOverrides({
+          fetch: makeFetch({ status: 200, body: makeImpersonatingMe(tampered) })
+            .fn as unknown as typeof fetch,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotOperatorError);
+  });
+
+  it('Y — rejects AGENCY when impersonation is a non-object (string)', async () => {
+    await expect(
+      requireOperatorSession(
+        defaultOverrides({
+          fetch: makeFetch({ status: 200, body: makeImpersonatingMe('not-an-object') })
+            .fn as unknown as typeof fetch,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotOperatorError);
+  });
+
+  it('Z — rejects AGENCY when impersonation is an array', async () => {
+    await expect(
+      requireOperatorSession(
+        defaultOverrides({
+          fetch: makeFetch({ status: 200, body: makeImpersonatingMe([VALID_IMPERSONATION]) })
+            .fn as unknown as typeof fetch,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotOperatorError);
+  });
+
+  it('AA — does not return access token or full session in OperatorIdentity', async () => {
+    const id = await requireOperatorSession(
+      defaultOverrides({
+        fetch: makeFetch({ status: 200, body: makeImpersonatingMe() })
+          .fn as unknown as typeof fetch,
+      }),
+    );
+    // Defense-in-depth: enumerate keys to confirm no token / session leakage.
+    const keys = Object.keys(id);
+    expect(keys).not.toContain('accessToken');
+    expect(keys).not.toContain('session');
+    expect(keys).not.toContain('tokenSet');
   });
 });
 

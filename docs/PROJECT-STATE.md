@@ -123,6 +123,19 @@ rule in `CLAUDE.md` §11.
   `findActiveByActor` used by `JwtAuthGuard` is unchanged — no JOIN
   added to per-request operator traffic. 36/36 impersonation tests
   pass; 23/23 hot-path JwtAuthGuard + search-guards tests pass.
+- **ADR-029 D4 amendment — impersonation carve-out (2026-05-10).**
+  `apps/admin/lib/session.ts` admits an actively-impersonating
+  operator: `userClass === 'AGENCY'` is accepted only when
+  `/me.impersonation` is a valid block whose
+  `actorUserClass === 'OPERATOR'` (and `scope === 'READ_ONLY'`,
+  non-empty `grantId` / `actorUserId` / `actorAuth0Sub` / `expiresAt`).
+  `MeResponse.impersonation` typed against new `MeImpersonationBlock`
+  (mirrors ADR-027 D6 AuthContext shape). `OperatorIdentity` carries
+  optional `impersonation: { grantId, expiresAt, scope }` for downstream
+  banner rendering. Pure AGENCY users still 403 → `/not-operator`.
+  Layout, AdminShell, and all server-only boundaries unchanged. No
+  banner rendering yet. 145/145 admin tests (was 135, +10); 736 root
+  passes (was 726, +10) with the same 4 MinIO baseline failures.
 
 ### FX
 - ADR-024 implemented through C5d.2:

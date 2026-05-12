@@ -1,6 +1,6 @@
 # ADR-029: Admin app foundation — auth, session, API client, layout, and design system v0
 
-- **Status:** Accepted (implemented 2026-05-10; all 7 steps complete)
+- **Status:** Accepted (implemented 2026-05-10; all 7 steps complete; D4 amended 2026-05-10 with narrow impersonation carve-out)
 - **Date:** 2026-05-10
 - **Supersedes:** nothing
 - **Amends:** nothing (additive — fills the operator-UI hole the
@@ -203,6 +203,42 @@ There is no "log in as an agency user from the admin app" path. There
 is no "switch tenant" path. The admin app is single-tenant per
 deployment for the foreseeable future; the BB-tenant ID is hardcoded
 in environment configuration (D8).
+
+> **2026-05-10 — D4 amendment: narrow impersonation carve-out.**
+> ADR-027 D6 flips `AuthContext.userClass` from `OPERATOR` to `AGENCY`
+> while a grant is active so retrofitted agency endpoints (per E4-A /
+> E4-B) accept the operator-as-agency request unchanged. That flip
+> means `/me` returns `userClass='AGENCY'` for an actively-impersonating
+> operator. Under the original D4 the layout gate would 403 such a
+> request to `/not-operator` immediately after `POST
+> /impersonation/start`, which makes the ADR-027 D11 banner and the
+> Stop button unreachable from the admin shell — the impersonation
+> feature would be architecturally unusable.
+>
+> The amended rule is:
+>
+> 1. `userClass === 'OPERATOR'` → admit (unchanged).
+> 2. `userClass === 'AGENCY'` AND `/me.impersonation` is a valid
+>    block whose `actorUserClass === 'OPERATOR'` → admit. This is
+>    not "agency access to admin"; it is an OPERATOR session
+>    temporarily shaped as AGENCY because of an active grant.
+> 3. Any other `userClass !== 'OPERATOR'` (including AGENCY without
+>    a valid impersonation block, malformed impersonation block,
+>    impersonation `actorUserClass !== 'OPERATOR'`, or
+>    `scope !== 'READ_ONLY'`) → 403 (unchanged).
+>
+> The amendment is implemented in `apps/admin/lib/session.ts`:
+> `MeResponse.impersonation` is typed against `MeImpersonationBlock`
+> (the ADR-027 D6 shape); `requireOperatorSession()` runs strict
+> validation via `isValidImpersonationBlock()` and returns an
+> `OperatorIdentity` carrying optional impersonation metadata
+> (`grantId`, `expiresAt`, `scope`). Tokens and the full session
+> object are still confined to the server-side helper (D12).
+>
+> The locked rules in D11 / D12 are unchanged. No new permission, no
+> new endpoint, no dev-token bypass. The future ADR-027 UI slice
+> consumes `OperatorIdentity.impersonation` to render the mandatory
+> D11 banner.
 
 ### D5. API client pattern
 

@@ -10,6 +10,33 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-029 D4 amendment (2026-05-10) — admin gate impersonation
+      carve-out.** `apps/admin/lib/session.ts` admits operators
+      currently impersonating an AGENCY account. New typed
+      `MeImpersonationBlock` mirrors the ADR-027 D6 AuthContext block
+      (`grantId`, `actorUserId`, `actorAuth0Sub`,
+      `actorUserClass: 'OPERATOR'`, `expiresAt`,
+      `scope: 'READ_ONLY'`). New `isValidImpersonationBlock()`
+      type-guard runs strict validation (every field non-empty;
+      `actorUserClass` and `scope` literal-locked). Gate logic:
+      `userClass === 'OPERATOR'` accepted as before; `userClass ===
+      'AGENCY'` accepted only when impersonation block validates;
+      else `NotOperatorError` → `/not-operator` (unchanged).
+      `OperatorIdentity` gains optional
+      `impersonation: { grantId, expiresAt, scope }`; tokens and full
+      session never leak. ADR-029 D4 amended in-file with a dated
+      annotation; ADR-029 INDEX row reflects amendment.
+      Tests: session.test.ts gains S/T/U/V/W/X/Y/Z/AA covering
+      accept-OPERATOR-no-impersonation, accept-impersonating, reject
+      no-impersonation, reject `actorUserClass='AGENCY'`, reject
+      missing grantId, reject `scope='READ_WRITE'`, reject
+      non-object impersonation, reject array, no token leakage.
+      protected-layout.test.ts gains test I (impersonating-operator
+      success path). 145/145 admin tests pass (was 135, +10); 736
+      root passes (was 726, +10) with same 4 MinIO baseline. Admin
+      typecheck + lint + build clean. **No banner. No /impersonation
+      route. No backend changes. No JwtAuthGuard change. No new
+      permissions. No dev-token bypass.**
 - [x] **ADR-027 active-grant UI prep (2026-05-10) — GET
       /impersonation/active returns target account name.**
       Backend-only slice unblocking the future ADR-027 D11 banner.

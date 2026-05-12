@@ -230,6 +230,16 @@ The user-facing copy does not distinguish "you're agency" from
 "you're operator without a role" — the audit trail records the
 difference.
 
+**Impersonation carve-out (ADR-029 D4 amendment, 2026-05-10).** ADR-027
+flips `AuthContext.userClass` to `'AGENCY'` while a grant is active so
+agency endpoints accept the operator-as-agency request unchanged. The
+gate accepts `userClass === 'AGENCY'` only when `/me.impersonation` is
+a valid block whose `actorUserClass === 'OPERATOR'` (with literal-locked
+`scope === 'READ_ONLY'` and non-empty grantId/actorUserId/actorAuth0Sub/
+expiresAt). Pure AGENCY users without impersonation still 403. The
+returned `OperatorIdentity` carries the impersonation metadata
+(`grantId`, `expiresAt`, `scope`) for the future ADR-027 D11 banner.
+
 ### Note for Next.js 16
 
 When this repo upgrades to Next.js 16, [`middleware.ts`](middleware.ts)

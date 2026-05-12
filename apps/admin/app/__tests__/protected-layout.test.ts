@@ -169,4 +169,18 @@ describe('ProtectedLayout — gate behavior', () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn).toHaveBeenCalledWith();
   });
+
+  it('I — renders successfully for an impersonating operator (ADR-029 D4 amendment)', async () => {
+    sessionState.result = {
+      ...VALID_IDENTITY,
+      impersonation: {
+        grantId: '01ARZ3NDEKTSV4RRFFQ69G5GRA',
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        scope: 'READ_ONLY',
+      },
+    };
+    const result = await ProtectedLayout({ children: 'imp-children' });
+    expect(result).toBeDefined();
+    expect(redirect).not.toHaveBeenCalled();
+  });
 });
