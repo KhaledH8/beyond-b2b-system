@@ -227,6 +227,45 @@ rule in `CLAUDE.md` §11.
 - Tests: 11 AuditService unit tests, 11 RequestIdMiddleware unit tests, 4 trigger
   integration tests (run after `pnpm db:migrate`; skipped when `DATABASE_URL` absent).
 
+### Audit read API (ADR-028 V1.0 step 7 — 2026-05-13)
+
+- **`AUDIT_READ_SENSITIVE` added to the permission catalogue.** Held only by
+  `platform_admin` (via the all-permissions self-grant). Other operator roles
+  retain `AUDIT_READ` only and see `SENSITIVE_ACCESS` rows silently filtered out.
+  Classified `READ` in `PERMISSION_KIND`. ADR-026 D6 amended with a dated annotation.
+- **`GET /admin/audit/events`** — operator-facing LIST endpoint at
+  `apps/api/src/admin-audit/`. JWT + `RolesGuard` + `AUDIT_READ` (NOT
+  `InternalAuthGuard`). Tenant scope sourced from `AuthContext.tenantId` only.
+  Filters: `category` (enum), `kind`, `actorUserId`, `targetKind`, `targetId`,
+  `requestId`, `impersonationGrantId`, `occurredFrom`, `occurredTo`, `limit`,
+  `cursor`. Cursor pagination on `(occurred_at, id)` — stable under inserts.
+  Sort `occurred_at DESC, id DESC`. Default limit 50, max 200. Parameterised
+  SQL (14 positional `$N` placeholders). Sensitive-category short-circuit:
+  request body `category=SENSITIVE_ACCESS` without `AUDIT_READ_SENSITIVE` → 403
+  before any DB or audit work; default queries silently exclude
+  `SENSITIVE_ACCESS` rows for non-sensitive callers.
+- **Self-audit.** Every successful call emits `SECURITY.AUDIT_QUERY_EXECUTED`
+  via `AuditService.emit()` (background, best-effort). Payload includes
+  `endpoint: 'LIST'`, the applied filter shape, `resultCount`, and
+  `requiredPermission` reflecting the caller's tier. Failed/4xx calls do NOT
+  emit (per ADR-028 D9).
+- **Kind-level PII redaction is deferred for V1.** Only the category-level
+  `SENSITIVE_ACCESS` filter is gated. Rationale: ADR-027 monthly impersonation
+  review obligation calls for `AUDIT_READ` to inspect `IMPERSONATION_*` events,
+  so introducing kind-level gating now would conflict with that.
+- 113 new backend tests: 9 cursor + 18 repo (SQL contract, parameter binding,
+  cursor predicate, injection safety) + 31 service (validation, clamping,
+  cursor decode, sensitive scope, applied-filters echo) + 14 controller
+  (delegation, guard/permission metadata, sensitive-access 403, self-audit
+  emission) + 12 HTTP flow (real `JwtAuthGuard` + `RolesGuard`, cross-tenant
+  exclusion, cursor pagination, 401/403 paths, X-Internal-Api-Key rejected,
+  AUDIT_QUERY_EXECUTED emit assertions) + 5 new permission tests
+  (`AUDIT_READ_SENSITIVE` exists, `platform_admin` has it, lower roles don't).
+- **NOT implemented in this slice:** DETAIL endpoint (`GET /admin/audit/events/:id`),
+  audit CLI (`bb-audit query`), retention cron, partition-creation cron,
+  `SENSITIVE_ACCESS` emitters (V1.1), backfill of legacy audit-shaped tables,
+  read replica routing, audit UI. All deferred per ADR-028 §"Implementation order".
+
 ### Recent meaningful commits
 ```
 2f74d06 feat(admin): add ADR-029 layout v0                                            (ADR-029 step 6)
@@ -282,15 +321,17 @@ Sequencing notes follow each cluster.
 
 ### Audit log infrastructure (ADR-028)
 
-**Steps 1–5 implemented (2026-05-09).** DB roles, `audit_event` table
-(composite partitioned, append-only triggers, indexes, grants),
-`audit_pruning_log`, `AuditService` (emit/emitInTransaction split,
-compile-time + runtime enforcement), `RequestIdMiddleware`
-(AsyncLocalStorage, ULID, X-Request-Id), `AuditModule` + `AppModule`
-wiring. ADR-027 V1.0 is now unblocked.
+**Steps 1–7 implemented.** Steps 1–5 landed 2026-05-09 (DB roles,
+`audit_event` table, `audit_pruning_log`, `AuditService`,
+`RequestIdMiddleware`, module wiring). Step 6 (first emitters) landed
+with ADR-027 V1.0. Step 7 (read API LIST + `AUDIT_READ_SENSITIVE`
+permission) landed 2026-05-13 — see the "Audit read API" entry under
+"Identity & auth" above.
 
-Still pending (steps 6–11): ADR-027 impersonation as first emitter;
-read API; CLI; retention cron; SENSITIVE_ACCESS table; backfill.
+Still pending: DETAIL endpoint (`GET /admin/audit/events/:id`); audit
+CLI (`bb-audit query`); retention cron; partition-creation cron;
+`SENSITIVE_ACCESS` emitters (V1.1); backfill of legacy audit-shaped
+tables; read replica routing; audit UI.
 
 ### Admin app foundation (ADR-029)
 
@@ -491,8 +532,10 @@ Three candidate slices, picked by priority call:
   every operator page; start/stop/active page at
   `apps/admin/app/impersonation/`. ADR-027 backend is fully shipped
   (V1.0 + TTL hardening + e2e verification). This is now unblocked.
-- **ADR-028 V1.0 steps 6–11** — backend track. Audit read API, CLI,
-  retention cron, SENSITIVE_ACCESS table, backfill.
+- **ADR-028 V1.0 remaining steps** — backend track. DETAIL endpoint
+  (`GET /admin/audit/events/:id`), `bb-audit query` CLI, retention
+  cron + partition-creation cron, `SENSITIVE_ACCESS` table (V1.1),
+  legacy-audit backfill.
 - **FX C5d.3 / C5d.4 / C6 / C7** — backend track. Remaining FX work
   per ADR-024.
 

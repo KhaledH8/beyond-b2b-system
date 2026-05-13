@@ -205,8 +205,18 @@ account.settings.edit              reseller.profile.read
 reseller.profile.edit              search.execute
 users.manage                       api_keys.manage
 user.role.grant                    audit.read
-impersonate.agency_account
+audit.read.sensitive               impersonate.agency_account
 ```
+
+> **2026-05-13 amendment — `audit.read.sensitive`.** ADR-028 D9
+> introduces this permission to gate reads of the
+> `SENSITIVE_ACCESS` audit category (and, when V1.1 adds them,
+> kind-level PII-bearing payloads). It is held only by
+> `platform_admin` (via the all-permissions self-grant); the other
+> operator roles continue to hold `audit.read` only and therefore
+> see the audit log with `SENSITIVE_ACCESS` rows silently filtered
+> out. The locked rule from D4 is unchanged: `platform_admin` holds
+> every permission.
 
 **Scope is an endpoint concern, not a permission concern.** A permission
 grants the *ability*; the endpoint enforces the *visibility*. For

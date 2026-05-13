@@ -6,6 +6,7 @@ import { AdaptersModule } from './adapters/adapters.module';
 import { SearchModule } from './search/search.module';
 import { AdminModule } from './admin/admin.module';
 import { AdminAgenciesModule } from './admin-agencies/admin-agencies.module';
+import { AdminAuditModule } from './admin-audit/admin-audit.module';
 import { DirectContractsModule } from './direct-contracts/direct-contracts.module';
 import { FxModule } from './fx/fx.module';
 import { BookingModule } from './booking/booking.module';
@@ -22,6 +23,7 @@ import { RequestIdMiddleware } from './audit/request-id.middleware';
     SearchModule,
     AdminModule,
     AdminAgenciesModule,
+    AdminAuditModule,
     DirectContractsModule,
     FxModule,
     BookingModule,

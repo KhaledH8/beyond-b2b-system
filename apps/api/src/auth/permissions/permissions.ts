@@ -133,6 +133,7 @@ export const PERMISSIONS = {
 
   // ─── Cross-cutting ─────────────────────────────────────────────
   AUDIT_READ:                            'audit.read',
+  AUDIT_READ_SENSITIVE:                  'audit.read.sensitive',
   IMPERSONATE_AGENCY_ACCOUNT:            'impersonate.agency_account',
 } as const;
 
@@ -347,6 +348,7 @@ export const PERMISSION_KIND: Readonly<Record<Permission, 'READ' | 'WRITE'>> =
     [PERMISSIONS.USER_ROLE_GRANT]:                       'WRITE',
     // ─── Cross-cutting ────────────────────────────────────────────────
     [PERMISSIONS.AUDIT_READ]:                            'READ',
+    [PERMISSIONS.AUDIT_READ_SENSITIVE]:                  'READ',
     [PERMISSIONS.IMPERSONATE_AGENCY_ACCOUNT]:            'WRITE',
   } satisfies Record<Permission, 'READ' | 'WRITE'>;
 

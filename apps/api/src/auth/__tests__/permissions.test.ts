@@ -117,6 +117,32 @@ describe('OPERATOR_PERMISSIONS matrix', () => {
     expect(m.read_only_auditor.has(PERMISSIONS.BOOKING_READ)).toBe(true);
     expect(m.read_only_auditor.has(PERMISSIONS.LEDGER_READ)).toBe(true);
   });
+
+  // ─── ADR-028 AUDIT_READ_SENSITIVE ───────────────────────────────────
+
+  it('AUDIT_READ_SENSITIVE exists in the catalogue', () => {
+    expect(PERMISSIONS.AUDIT_READ_SENSITIVE).toBe('audit.read.sensitive');
+    const all = Object.values(PERMISSIONS) as Permission[];
+    expect(all).toContain(PERMISSIONS.AUDIT_READ_SENSITIVE);
+  });
+
+  it('platform_admin has AUDIT_READ_SENSITIVE (via ALL_PERMISSIONS)', () => {
+    expect(m.platform_admin.has(PERMISSIONS.AUDIT_READ_SENSITIVE)).toBe(true);
+  });
+
+  it('non-admin operator roles do NOT have AUDIT_READ_SENSITIVE', () => {
+    expect(m.ops_support.has(PERMISSIONS.AUDIT_READ_SENSITIVE)).toBe(false);
+    expect(m.finance_ops.has(PERMISSIONS.AUDIT_READ_SENSITIVE)).toBe(false);
+    expect(m.integrations_ops.has(PERMISSIONS.AUDIT_READ_SENSITIVE)).toBe(false);
+    expect(m.read_only_auditor.has(PERMISSIONS.AUDIT_READ_SENSITIVE)).toBe(false);
+  });
+
+  it('non-admin operator roles still have AUDIT_READ (base permission unchanged)', () => {
+    expect(m.ops_support.has(PERMISSIONS.AUDIT_READ)).toBe(true);
+    expect(m.finance_ops.has(PERMISSIONS.AUDIT_READ)).toBe(true);
+    expect(m.integrations_ops.has(PERMISSIONS.AUDIT_READ)).toBe(true);
+    expect(m.read_only_auditor.has(PERMISSIONS.AUDIT_READ)).toBe(true);
+  });
 });
 
 describe('AGENCY_PERMISSIONS matrix', () => {

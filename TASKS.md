@@ -10,6 +10,62 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-028 V1.0 step 7 — audit read API LIST (2026-05-13).**
+      Backend-only slice. New permission `AUDIT_READ_SENSITIVE`
+      added to the catalogue (PERMISSIONS const + PERMISSION_KIND as
+      `READ`); `platform_admin` automatically picks it up via the
+      all-permissions self-grant; lower roles (`ops_support`,
+      `finance_ops`, `integrations_ops`, `read_only_auditor`) keep
+      `AUDIT_READ` only. ADR-026 D6 amended with a dated annotation.
+      New module `apps/api/src/admin-audit/`:
+        - `audit-event.repository.ts` — single parameterised SQL
+          with 14 positional `$N` placeholders covering tenant,
+          all filters, sensitive-scope, cursor, limit; ORDER BY
+          `occurred_at DESC, id DESC`; no string interpolation.
+        - `audit-event.service.ts` — input validation (ULID,
+          category enum, ISO dates), limit clamping (default 50,
+          max 200, min 1), cursor decode via shared helper,
+          applied-filters echo for audit emission. Fetches limit+1
+          rows for has-more detection.
+        - `cursor.ts` — base64-JSON `(occurredAt, id)` encoding;
+          invalid cursors decode to null (never throw); decoded by
+          the service into a typed value.
+        - `admin-audit.controller.ts` — JWT + RolesGuard +
+          `@RequirePermission(AUDIT_READ)` (NOT InternalAuthGuard).
+          Tenant scope sourced from AuthContext only. Re-resolves
+          permissions via `PermissionResolverService` to check for
+          `AUDIT_READ_SENSITIVE`. Sensitive-category short-circuit:
+          `category=SENSITIVE_ACCESS` without the sensitive
+          permission → 403 before any DB or audit work. Successful
+          calls emit `SECURITY.AUDIT_QUERY_EXECUTED` via
+          `AuditService.emit()` (background, best-effort); failed
+          4xx calls do NOT emit per ADR-028 D9.
+        - `admin-audit.module.ts` — imports DatabaseModule +
+          AuthModule; wired into AppModule.
+      Tests: 9 cursor unit + 18 repo SQL contract + 31 service
+      validation + 14 controller (delegation, guard/permission
+      metadata, sensitive 403, self-audit, audit-emit-throw-isolated)
+      + 12 HTTP flow with real `JwtAuthGuard` + `RolesGuard`
+      (happy path, sensitive scope, 403/401 paths,
+      X-Internal-Api-Key rejected, cross-tenant exclusion, cursor
+      pagination, AUDIT_QUERY_EXECUTED assertion). Plus 5 new
+      permission tests asserting `AUDIT_READ_SENSITIVE` is in
+      `ALL_PERMISSIONS`, `platform_admin` has it, lower operator
+      roles don't. **113 new backend tests, all passing.** API
+      typecheck + lint clean. Impersonation + JwtAuthGuard +
+      agency-selector tests still 86/86. Root suite 939 passed
+      with only the pre-existing search MinIO/DB baseline failure.
+      **Kind-level PII redaction is deliberately deferred for V1.**
+      Only category-level `SENSITIVE_ACCESS` is gated by
+      `AUDIT_READ_SENSITIVE`; `IMPERSONATION_*` events remain
+      readable with `AUDIT_READ` per ADR-027's monthly review
+      obligation. Documented in PROJECT-STATE + this entry +
+      ADR-026 amendment.
+      **NOT implemented in this slice:** DETAIL endpoint
+      (`GET /admin/audit/events/:id`), `bb-audit query` CLI,
+      retention cron, partition-creation cron, `SENSITIVE_ACCESS`
+      emitters (V1.1), legacy-audit backfill, audit UI. All
+      deferred per ADR-028 §"Implementation order".
 - [x] **ADR-027 V1.1 agency selector (2026-05-13) — backend +
       admin UI.**
       Backend: new `apps/api/src/admin-agencies/` module exposing
