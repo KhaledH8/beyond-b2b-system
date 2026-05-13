@@ -10,6 +10,70 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-027 impersonation UI v1 (2026-05-10) — Slice 3.**
+      First operator UI on top of the ADR-029 foundation.
+      `apps/admin/lib/impersonation-client.ts` (server-only) wraps
+      `apiFetch` with three typed functions:
+      `getActiveImpersonation()`, `startImpersonation(input)`,
+      `stopImpersonation()`. Wire types mirror the API exactly.
+      `app/(protected)/impersonation/actions.ts` (`'use server'`)
+      exports `startImpersonationAction` (validates ULID + non-empty
+      ticketRef/reasonText, maps typed `Api*Error` → form-state
+      messages, on success revalidates `/` layout + `/impersonation`
+      then redirects to `/impersonation`) and `stopImpersonationAction`
+      (idempotent, swallows errors, revalidates). Form-state types in
+      sibling `form-state.ts` (Next forbids non-function exports from
+      `'use server'` files).
+      New components:
+        - `components/ImpersonationBanner.tsx` (server) — `<Banner
+          variant="danger">` with account name + ID + ticketRef +
+          expiry + READ_ONLY warning + End-impersonation submit form.
+        - `components/ImpersonationActiveCard.tsx` (server) — full
+          grant detail dl (target, ticket, reason, scope, startedAt,
+          expiresAt) + Stop button.
+        - `components/ImpersonationStartForm.tsx` (`'use client'`,
+          uses `useActionState`) — three required fields (Input for
+          targetAccountId with helper text explicitly stating "no
+          agency selector yet — paste from support ticket"; Input
+          for ticketRef; Textarea for reasonText) + inline
+          field/form error display.
+      `components/SystemBanner.tsx` now accepts optional
+      `impersonation` prop and renders `<ImpersonationBanner>` when
+      set; null when absent (existing test H still passes).
+      `components/AdminShell.tsx` threads `impersonation` from
+      layout to SystemBanner.
+      `components/Sidebar.tsx` gains an Impersonation link.
+      `app/(protected)/layout.tsx` calls `getActiveImpersonation()`
+      when `identity.impersonation` is present; degrades gracefully
+      to no banner on null (TTL race) or thrown error (5xx /
+      network). No tokens flow to client components.
+      `app/(protected)/impersonation/page.tsx` (new) renders the
+      active card OR the start form based on
+      `getActiveImpersonation()`.
+      Tests: new `lib/__tests__/impersonation-client.test.ts` (7
+      tests A–G covering endpoints, methods, body shapes, response
+      parsing, error propagation, idempotency); existing
+      `layout-components.test.tsx` extended from 18 to 39 tests
+      (added H2 for SystemBanner impersonation render; K2 for
+      Sidebar Impersonation link; R2 for AdminShell threading
+      impersonation; S–Y for ImpersonationBanner; Z–FF for
+      ImpersonationActiveCard; GG–JJ for ImpersonationStartForm);
+      `server-only-boundary.test.ts` extended to include
+      `lib/impersonation-client` in the static-source scan list and
+      its `server-only` top-line guard. Admin tests 173/173 (was
+      145, +28). Admin typecheck + lint + build clean; new route
+      `/impersonation` shows as `ƒ` (Dynamic) in the build table.
+      Root suite shows pre-existing Docker-down failures (no Docker
+      Desktop on this machine); slice-relevant API tests
+      (impersonation service + controller + flow + JwtAuthGuard) all
+      47/47 pass.
+      **V1 limitation (documented in README + form helper text +
+      catalogue): raw 26-char ULID input only; no agency selector.
+      Deliberate scope call — requires a tenant-scoped agency-search
+      endpoint that does not exist. Operator pastes ULID from a
+      support ticket; backend still validates AGENCY + same-tenant.**
+      **No role UI. No audit UI. No backend changes. No JwtAuthGuard
+      change. No dev-token bypass.**
 - [x] **ADR-029 D4 amendment (2026-05-10) — admin gate impersonation
       carve-out.** `apps/admin/lib/session.ts` admits operators
       currently impersonating an AGENCY account. New typed

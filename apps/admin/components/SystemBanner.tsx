@@ -1,11 +1,26 @@
+import { ImpersonationBanner } from './ImpersonationBanner';
+
+export interface SystemBannerProps {
+  /**
+   * Set when the operator session has an active impersonation grant.
+   * Rendered via `<ImpersonationBanner>` (ADR-027 D11). The layout
+   * resolves this from `GET /impersonation/active`; only safe display
+   * data is threaded in — no tokens, no full session.
+   */
+  readonly impersonation?: {
+    readonly accountName: string;
+    readonly accountId: string;
+    readonly ticketRef: string;
+    readonly expiresAt: string;
+  };
+}
+
 /**
- * SystemBanner — slot for system-wide operator alerts.
- *
- * Renders nothing in ADR-029 Step 6. The ADR-027 impersonation
- * active-session banner will mount here in the next operator-UI slice.
- * Keeping this component as an explicit slot prevents step-6 layout
- * consumers from needing an update when the banner lands.
+ * Slot for system-wide operator alerts in the AdminShell. Today only
+ * the ADR-027 impersonation banner mounts here. Returns null when
+ * there is nothing to show (no DOM nodes, no visual whitespace).
  */
-export function SystemBanner() {
-  return null;
+export function SystemBanner({ impersonation }: SystemBannerProps = {}) {
+  if (!impersonation) return null;
+  return <ImpersonationBanner {...impersonation} />;
 }

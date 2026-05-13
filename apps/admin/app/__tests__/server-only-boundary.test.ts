@@ -29,6 +29,7 @@ const SERVER_MODULES = [
   'lib/session',
   'lib/auth0',
   'lib/api-client',
+  'lib/impersonation-client',
 ];
 
 async function walkTree(root: string): Promise<string[]> {
@@ -124,9 +125,14 @@ describe('server-only boundary — static source scan', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('L — session/auth0/api-client all start with `import "server-only"`', async () => {
+  it('L — session/auth0/api-client/impersonation-client all start with `import "server-only"`', async () => {
     const libDir = path.join(adminRoot(), 'lib');
-    const targets = ['session.ts', 'auth0.ts', 'api-client.ts'];
+    const targets = [
+      'session.ts',
+      'auth0.ts',
+      'api-client.ts',
+      'impersonation-client.ts',
+    ];
     for (const t of targets) {
       const src = await fsp.readFile(path.join(libDir, t), 'utf8');
       expect(

@@ -310,11 +310,34 @@ pnpm --filter @bb/admin build      # next build (production smoke)
 
 Playwright is deliberately deferred to the second admin UI slice.
 
+## Operator impersonation UI v1 (ADR-027 Slice 3)
+
+The first feature slice on top of the ADR-029 foundation. Three surfaces:
+
+| Surface | Lives in | Purpose |
+|---|---|---|
+| Persistent banner | `components/ImpersonationBanner.tsx` mounted by `SystemBanner` | ADR-027 D11 mandatory alert on every authenticated page when a grant is active. Shows account name, account ID, ticket ref, expiry, READ_ONLY warning, and Stop button. |
+| `/impersonation` active card | `components/ImpersonationActiveCard.tsx` | Full grant detail: target account, ticket ref, reason text, startedAt, expiresAt, READ_ONLY scope, Stop button. |
+| `/impersonation` start form | `components/ImpersonationStartForm.tsx` (client) | Three-field form using `useActionState`: targetAccountId (ULID), ticketRef, reasonText. Inline validation + API-error display. |
+
+Server actions live in [`app/(protected)/impersonation/actions.ts`](app/(protected)/impersonation/actions.ts) (`'use server'`). The actions own all backend writes; client components only see the marshalled function reference. Form-state types live in a sibling [`form-state.ts`](app/(protected)/impersonation/form-state.ts) because `'use server'` files may not export non-function values.
+
+The typed HTTP wrapper [`lib/impersonation-client.ts`](lib/impersonation-client.ts) is server-only (`import 'server-only'`) and consumes `apiFetch` for bearer handling + `cache: 'no-store'` + typed error hierarchy. Client components never import it; the boundary scan asserts this.
+
+### V1 limitation: raw account ID input
+
+There is **no agency selector / typeahead** yet. The start form accepts a raw 26-character ULID for `targetAccountId`. The helper text tells operators to paste from a support ticket. This is a deliberate scope call: the selector requires a new backend endpoint (`GET /admin/agencies?q=…`) that does not exist. Operators rely on the support workflow to surface the agency's accountId.
+
+The backend is still authoritative — it validates AGENCY type, same tenant, and active status. A wrong ULID returns 403/404; the form shows a clear message.
+
+A future slice will add the selector once a tenant-scoped agency-search endpoint lands.
+
 ## What this app does NOT do (yet)
 
 ADR-029 §D11 / D12. None of these ship in V0.1:
 
-- No impersonation UI (next slice after the foundation).
+- ✓ ADR-027 impersonation UI v1 — implemented (banner + start/stop/active page).
+- No agency-account selector / typeahead — raw ULID input only.
 - No role-management UI.
 - No audit-event read UI.
 - No agency portal (that lives in `apps/b2b-portal`).

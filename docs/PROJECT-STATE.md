@@ -136,6 +136,27 @@ rule in `CLAUDE.md` §11.
   Layout, AdminShell, and all server-only boundaries unchanged. No
   banner rendering yet. 145/145 admin tests (was 135, +10); 736 root
   passes (was 726, +10) with the same 4 MinIO baseline failures.
+- **ADR-027 impersonation UI v1 (2026-05-10).** First operator UI
+  slice on top of the ADR-029 foundation. New server-only
+  `lib/impersonation-client.ts` wraps `apiFetch` for typed
+  `getActiveImpersonation` / `startImpersonation` / `stopImpersonation`.
+  Server actions in `app/(protected)/impersonation/actions.ts`
+  (`'use server'`) own start (ULID + non-empty validation + typed
+  API-error mapping) and stop (idempotent, swallows errors,
+  revalidates). New `/impersonation` page renders either the active
+  card (target / ticket / reason / scope / startedAt / expiresAt +
+  Stop) or the start form (targetAccountId ULID input + ticketRef
+  + reasonText with helper text explicitly noting no agency selector
+  yet). Persistent `<Banner variant="danger">` mounts in the
+  `<SystemBanner />` slot via the layout (which now calls
+  `getActiveImpersonation` when `identity.impersonation` is set;
+  degrades gracefully on null/5xx). Sidebar gains an Impersonation
+  link. Boundary scan extended to include `lib/impersonation-client`.
+  173/173 admin tests (was 145, +28); admin typecheck + lint + build
+  clean (new route `/impersonation` is ƒ Dynamic). **No agency
+  selector / typeahead** — deliberate V1 scope; operator pastes
+  ULID from support ticket. **No role-management UI. No audit UI.
+  No backend changes.**
 
 ### FX
 - ADR-024 implemented through C5d.2:

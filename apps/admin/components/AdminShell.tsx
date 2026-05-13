@@ -1,11 +1,16 @@
 import type { ReactNode } from 'react';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
-import { SystemBanner } from './SystemBanner';
+import { SystemBanner, type SystemBannerProps } from './SystemBanner';
 
 export interface AdminShellProps {
   /** Resolved display string: name ?? email ?? auth0Sub. Never a token. */
   displayName: string;
+  /**
+   * Optional active-impersonation banner payload (ADR-027 D11).
+   * Threaded straight to `<SystemBanner>` — no tokens, no full session.
+   */
+  impersonation?: SystemBannerProps['impersonation'];
   children: ReactNode;
 }
 
@@ -14,7 +19,7 @@ export interface AdminShellProps {
  *
  * Structure (top to bottom / left to right):
  *
- *   SystemBanner   ← empty in step 6; ADR-027 impersonation banner mounts here
+ *   SystemBanner   ← ADR-027 impersonation banner when active
  *   Header         ← app name, operator display name, sign-out link
  *   ┌─────────┬────────────────────────────┐
  *   │ Sidebar │ <main> {children} </main>  │
@@ -22,12 +27,16 @@ export interface AdminShellProps {
  *
  * Only safe display data flows in — no tokens, no session objects.
  * The protected layout resolves the operator identity and extracts
- * `displayName` before passing it here.
+ * `displayName` + the impersonation banner payload before passing them.
  */
-export function AdminShell({ displayName, children }: AdminShellProps) {
+export function AdminShell({
+  displayName,
+  impersonation,
+  children,
+}: AdminShellProps) {
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
-      <SystemBanner />
+      <SystemBanner impersonation={impersonation} />
       <Header displayName={displayName} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
