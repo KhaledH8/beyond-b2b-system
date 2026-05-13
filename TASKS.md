@@ -10,6 +10,65 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **ADR-027 V1.1 agency selector (2026-05-13) — backend +
+      admin UI.**
+      Backend: new `apps/api/src/admin-agencies/` module exposing
+      `GET /admin/agencies` (JWT + `RolesGuard` +
+      `IMPERSONATE_AGENCY_ACCOUNT`). Tenant scoped via
+      `AuthContext.tenantId`; never via query. Hard WHERE filter
+      to `account_type = 'AGENCY'` + `status = 'ACTIVE'`. `q`
+      matches name (ILIKE substring) and id (ILIKE prefix);
+      `limit` defaults to 20 and is clamped 1–50 at the service.
+      Parameterised SQL with `$1/$2/$3` placeholders. Repository →
+      service → controller layering mirrors the existing
+      `auth/impersonation` module. Wired into `AppModule`. 39
+      backend tests added: 12 service (input shaping, limit
+      clamping, result mapping), 8 repo (SQL contract, params,
+      sort, injection safety), 8 controller (delegation +
+      guard/permission metadata), 11 HTTP end-to-end (boots real
+      Nest with `JwtAuthGuard` + `RolesGuard`; covers operator
+      happy path, q-by-name, q-by-id-prefix, limit honour,
+      SUSPENDED/non-AGENCY/cross-tenant rejection, no-permission
+      403, AGENCY user 403, 401 without bearer, and 401 when only
+      `X-Internal-Api-Key` is sent — proves the endpoint is
+      JWT-only). API typecheck + lint clean.
+      Admin app: `lib/impersonation-client.ts` gains
+      `listAgencies(q?, limit?)` with query-string assembly +
+      trim + floor + empty-result normalisation. New server
+      action `searchAgenciesAction` wraps `listAgencies` and
+      degrades to `{ accounts: [] }` on any error so the form
+      always renders. `components/ImpersonationStartForm.tsx`
+      rewritten as a richer `'use client'` component:
+        - Agency search Input + Search button (runs on Enter or
+          click via `useTransition`).
+        - Clickable result list rendered from `initialAgencies`
+          prop, with name + ID in each row and a selected
+          highlight.
+        - "Selected:" panel shows the chosen agency.
+        - "Or enter the account ULID manually" toggle reveals
+          the V1 raw-ULID Input as a fallback.
+        - Hidden `<input name="targetAccountId">` carries either
+          the selected or the manual value to the unchanged
+          `startImpersonationAction`.
+      `app/(protected)/impersonation/page.tsx` fetches the
+      initial top-20 agency list server-side and passes it down
+      (graceful degrade to empty list on error). 16 admin tests
+      added: 7 client-lib `listAgencies` (URL composition, trim,
+      floor, normalisation, error propagation) + 9 form selector
+      (agency input/button/list, empty state, click-to-select,
+      hidden field wiring, manual fallback toggle + drive,
+      back-to-selector). Replaced the four old V1 raw-ULID form
+      tests; relabelled with selector-aware names. Admin
+      typecheck + lint + test (189/189, was 173) + build clean
+      (`/impersonation` 1.91 KB → 2.82 KB JS). Root suite shows
+      the pre-existing search MinIO/DB baseline failure only
+      (1 file, 2 tests). **Auth0 local smoke-testing still
+      pending** — real dev-tenant credentials are not configured
+      locally; deferred until those land.
+      **No advanced filters. No pagination beyond top 50. No
+      live debounced search. No backend changes outside
+      `admin-agencies/`. No JwtAuthGuard change. No new
+      permission. No dev-token bypass.**
 - [x] **ADR-027 impersonation UI v1 (2026-05-10) — Slice 3.**
       First operator UI on top of the ADR-029 foundation.
       `apps/admin/lib/impersonation-client.ts` (server-only) wraps

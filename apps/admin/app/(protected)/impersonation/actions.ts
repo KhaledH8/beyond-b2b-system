@@ -11,8 +11,10 @@ import {
   ApiValidationError,
 } from '../../../lib/api-client';
 import {
+  listAgencies,
   startImpersonation,
   stopImpersonation,
+  type ListAgenciesResponse,
 } from '../../../lib/impersonation-client';
 import { ULID_PATTERN } from '../../../lib/ulid';
 import type { StartFormState } from './form-state';
@@ -132,4 +134,21 @@ export async function stopImpersonationAction(): Promise<void> {
   }
   revalidatePath('/', 'layout');
   revalidatePath('/impersonation');
+}
+
+/**
+ * Server action invoked from the client-side `ImpersonationStartForm`
+ * to refresh the agency list when the operator types into the search
+ * field. Returns `{ accounts: [] }` on any error so the form renders
+ * the empty state instead of crashing — the operator can fall back to
+ * manual ULID entry if the selector is unavailable.
+ */
+export async function searchAgenciesAction(
+  q: string,
+): Promise<ListAgenciesResponse> {
+  try {
+    return await listAgencies(q, 20);
+  } catch {
+    return { accounts: [] };
+  }
 }

@@ -28,9 +28,11 @@ vi.mock('../api-client', () => ({
 import { apiFetch } from '../api-client';
 import {
   getActiveImpersonation,
+  listAgencies,
   startImpersonation,
   stopImpersonation,
   type ActiveImpersonationResponse,
+  type ListAgenciesResponse,
   type StartImpersonationResponse,
 } from '../impersonation-client';
 
@@ -148,5 +150,71 @@ describe('stopImpersonation', () => {
   it('G — returns ended=false when no grant was active (idempotent)', async () => {
     (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ended: false });
     expect((await stopImpersonation()).ended).toBe(false);
+  });
+});
+
+// ── listAgencies (ADR-027 V1.1) ──────────────────────────────────────
+
+const LIST_FIXTURE: ListAgenciesResponse = {
+  accounts: [
+    { id: '01ARZ3NDEKTSV4RRFFQ69G5AAA', name: 'Acme Travel', status: 'ACTIVE' },
+    { id: '01ARZ3NDEKTSV4RRFFQ69G5BBB', name: 'Beta Tours',  status: 'ACTIVE' },
+  ],
+};
+
+describe('listAgencies', () => {
+  it('H — calls GET /admin/agencies with no query params when q & limit are absent', async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(LIST_FIXTURE);
+
+    const result = await listAgencies();
+
+    expect(apiFetch).toHaveBeenCalledWith('GET', '/admin/agencies');
+    expect(result.accounts).toHaveLength(2);
+  });
+
+  it('I — appends `q` query param (trimmed) when provided', async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(LIST_FIXTURE);
+
+    await listAgencies('  acme  ');
+
+    expect(apiFetch).toHaveBeenCalledWith('GET', '/admin/agencies?q=acme');
+  });
+
+  it('J — omits q when it trims to an empty string', async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(LIST_FIXTURE);
+
+    await listAgencies('   ');
+
+    expect(apiFetch).toHaveBeenCalledWith('GET', '/admin/agencies');
+  });
+
+  it('K — appends `limit` (floored) when provided', async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(LIST_FIXTURE);
+
+    await listAgencies('acme', 15.7);
+
+    expect(apiFetch).toHaveBeenCalledWith(
+      'GET',
+      '/admin/agencies?q=acme&limit=15',
+    );
+  });
+
+  it('L — omits limit when not finite', async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(LIST_FIXTURE);
+
+    await listAgencies('acme', NaN);
+
+    expect(apiFetch).toHaveBeenCalledWith('GET', '/admin/agencies?q=acme');
+  });
+
+  it('M — normalizes an empty/undefined response to { accounts: [] }', async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+    expect(await listAgencies()).toEqual({ accounts: [] });
+  });
+
+  it('N — propagates apiFetch errors (typed error hierarchy preserved)', async () => {
+    const err = new Error('forbidden');
+    (apiFetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err);
+    await expect(listAgencies('acme')).rejects.toBe(err);
   });
 });

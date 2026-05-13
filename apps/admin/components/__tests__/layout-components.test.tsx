@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 // SystemBanner now transitively imports the server actions file, which
@@ -314,32 +314,147 @@ describe('ImpersonationActiveCard', () => {
   });
 });
 
-// ── ImpersonationStartForm ────────────────────────────────────────────
+// ── ImpersonationStartForm — V1.1 agency selector ─────────────────────
 
-describe('ImpersonationStartForm', () => {
-  it('GG — renders the Target account ID input (with name and helper text)', () => {
-    render(<ImpersonationStartForm />);
-    const input = screen.getByLabelText(/target account id/i);
-    expect(input).toHaveAttribute('name', 'targetAccountId');
-    expect(screen.getByText(/no agency selector yet/i)).toBeInTheDocument();
+const AGENCY_FIXTURES = [
+  {
+    id: '01ARZ3NDEKTSV4RRFFQ69G5AAA',
+    name: 'Acme Travel',
+    status: 'ACTIVE' as const,
+  },
+  {
+    id: '01ARZ3NDEKTSV4RRFFQ69G5BBB',
+    name: 'Beta Tours',
+    status: 'ACTIVE' as const,
+  },
+];
+
+describe('ImpersonationStartForm — selector mode (default)', () => {
+  it('GG — renders the Agency search input with the right helper text', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    const input = screen.getByLabelText(/^agency$/i);
+    expect(input).toHaveAttribute('name', 'agencyQuery');
+    expect(
+      screen.getByText(/search by agency name or account id/i),
+    ).toBeInTheDocument();
   });
 
-  it('HH — renders the Ticket reference input', () => {
-    render(<ImpersonationStartForm />);
+  it('GG2 — renders the Search button', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    const button = screen.getByTestId('agency-search-button');
+    expect(button).toHaveAttribute('type', 'button');
+    expect(button).toHaveTextContent(/search/i);
+  });
+
+  it('GG3 — renders each initial agency as a clickable option (name + ID)', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    expect(screen.getByTestId('agency-list')).toBeInTheDocument();
+    for (const a of AGENCY_FIXTURES) {
+      const option = screen.getByTestId(`agency-option-${a.id}`);
+      expect(option).toBeInTheDocument();
+      expect(option).toHaveTextContent(a.name);
+      expect(option).toHaveTextContent(a.id);
+    }
+  });
+
+  it('GG4 — empty initial list renders the empty-state message', () => {
+    render(<ImpersonationStartForm initialAgencies={[]} />);
+    expect(screen.getByTestId('agency-empty-state')).toHaveTextContent(
+      /no active agencies found/i,
+    );
+    expect(screen.queryByTestId('agency-list')).toBeNull();
+  });
+
+  it('GG5 — clicking an agency option selects it (selected display + hidden field)', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    const option = screen.getByTestId(`agency-option-${AGENCY_FIXTURES[0]!.id}`);
+    fireEvent.click(option);
+
+    // Selected display visible.
+    expect(screen.getByTestId('agency-selected-name')).toHaveTextContent(
+      'Acme Travel',
+    );
+    expect(screen.getByTestId('agency-selected-id')).toHaveTextContent(
+      AGENCY_FIXTURES[0]!.id,
+    );
+
+    // Hidden submission field carries the selected id.
+    const hidden = screen.getByTestId('hidden-target-account-id') as HTMLInputElement;
+    expect(hidden.name).toBe('targetAccountId');
+    expect(hidden.value).toBe(AGENCY_FIXTURES[0]!.id);
+  });
+
+  it('GG6 — hidden targetAccountId is empty before any selection', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    const hidden = screen.getByTestId(
+      'hidden-target-account-id',
+    ) as HTMLInputElement;
+    expect(hidden.value).toBe('');
+  });
+});
+
+describe('ImpersonationStartForm — manual fallback', () => {
+  it('HH — clicking the manual-mode toggle shows the manual ULID input', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    fireEvent.click(screen.getByTestId('manual-mode-toggle'));
+
+    expect(screen.getByTestId('manual-target-account-id')).toBeInTheDocument();
+    expect(screen.queryByTestId('agency-list')).toBeNull();
+  });
+
+  it('HH2 — manual input drives the hidden targetAccountId when in manual mode', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    fireEvent.click(screen.getByTestId('manual-mode-toggle'));
+
+    const manualInput = screen.getByTestId(
+      'manual-target-account-id',
+    ) as HTMLInputElement;
+    fireEvent.change(manualInput, {
+      target: { value: '01ARZ3NDEKTSV4RRFFQ69G5ZZZ' },
+    });
+
+    const hidden = screen.getByTestId(
+      'hidden-target-account-id',
+    ) as HTMLInputElement;
+    expect(hidden.value).toBe('01ARZ3NDEKTSV4RRFFQ69G5ZZZ');
+  });
+
+  it('HH3 — "Back to agency selector" returns to selector mode', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    fireEvent.click(screen.getByTestId('manual-mode-toggle'));
+    fireEvent.click(screen.getByTestId('selector-mode-toggle'));
+
+    expect(screen.queryByTestId('manual-target-account-id')).toBeNull();
+    expect(screen.getByTestId('agency-list')).toBeInTheDocument();
+  });
+});
+
+describe('ImpersonationStartForm — common fields preserved', () => {
+  it('II — renders the Ticket reference input with the right name', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
     const input = screen.getByLabelText(/ticket reference/i);
     expect(input).toHaveAttribute('name', 'ticketRef');
   });
 
-  it('II — renders the Reason textarea', () => {
-    render(<ImpersonationStartForm />);
+  it('II2 — renders the Reason textarea with the right name', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
     const textarea = screen.getByLabelText(/^reason$/i);
     expect(textarea.tagName).toBe('TEXTAREA');
     expect(textarea).toHaveAttribute('name', 'reasonText');
   });
 
-  it('JJ — renders a Start impersonation submit button', () => {
-    render(<ImpersonationStartForm />);
+  it('JJ — renders the Start impersonation submit button', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
     const button = screen.getByRole('button', { name: /start impersonation/i });
     expect(button).toHaveAttribute('type', 'submit');
+  });
+
+  it('JJ2 — hidden targetAccountId field exists with name="targetAccountId"', () => {
+    render(<ImpersonationStartForm initialAgencies={AGENCY_FIXTURES} />);
+    const hidden = screen.getByTestId(
+      'hidden-target-account-id',
+    ) as HTMLInputElement;
+    expect(hidden.name).toBe('targetAccountId');
+    expect(hidden.type).toBe('hidden');
   });
 });

@@ -62,6 +62,16 @@ export interface StopImpersonationResponse {
   readonly ended: boolean;
 }
 
+export interface AgencySummary {
+  readonly id: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+export interface ListAgenciesResponse {
+  readonly accounts: ReadonlyArray<AgencySummary>;
+}
+
 // ── Functions ──────────────────────────────────────────────────────────
 
 /**
@@ -112,4 +122,28 @@ export async function stopImpersonation(): Promise<StopImpersonationResponse> {
     '/impersonation/stop',
     { body: {} },
   );
+}
+
+/**
+ * GET /admin/agencies — operator-only agency selector (ADR-027 V1.1).
+ *
+ * Tenant-scoped on the backend (sourced from AuthContext, never from
+ * query params). Returns only AGENCY accounts with status='ACTIVE'.
+ * The backend caps `limit` at 50; values above that are silently
+ * clamped.
+ */
+export async function listAgencies(
+  q?: string,
+  limit?: number,
+): Promise<ListAgenciesResponse> {
+  const params = new URLSearchParams();
+  const trimmed = typeof q === 'string' ? q.trim() : '';
+  if (trimmed !== '') params.set('q', trimmed);
+  if (typeof limit === 'number' && Number.isFinite(limit)) {
+    params.set('limit', String(Math.floor(limit)));
+  }
+  const qs = params.toString();
+  const path = qs ? `/admin/agencies?${qs}` : '/admin/agencies';
+  const body = await apiFetch<ListAgenciesResponse>('GET', path);
+  return body ?? { accounts: [] };
 }

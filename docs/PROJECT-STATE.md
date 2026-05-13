@@ -123,6 +123,29 @@ rule in `CLAUDE.md` §11.
   `findActiveByActor` used by `JwtAuthGuard` is unchanged — no JOIN
   added to per-request operator traffic. 36/36 impersonation tests
   pass; 23/23 hot-path JwtAuthGuard + search-guards tests pass.
+- **ADR-027 V1.1 agency selector (2026-05-13).** New
+  `GET /admin/agencies` endpoint at `apps/api/src/admin-agencies/`:
+  JWT-authenticated + `RolesGuard` + `IMPERSONATE_AGENCY_ACCOUNT`
+  permission (NOT `InternalAuthGuard`). Tenant scope sourced from
+  `AuthContext.tenantId` only — no cross-tenant query param. Hard
+  WHERE filter to `account_type = 'AGENCY'` + `status = 'ACTIVE'`.
+  Search by `q` (case-insensitive name substring OR id prefix);
+  `limit` defaults to 20, clamped 1–50. Parameterised SQL. Wired
+  through new `AdminAgenciesModule` → `AgencySelectorService` →
+  `AgencySelectorRepository`. 39 new backend tests (12 service +
+  8 repo + 8 controller + 11 HTTP flow with real `JwtAuthGuard` +
+  `RolesGuard`). Admin app: `lib/impersonation-client.ts` gains
+  `listAgencies(q?, limit?)`. New `searchAgenciesAction` server
+  action wraps `listAgencies` and degrades to `{ accounts: [] }` on
+  any error. `ImpersonationStartForm` rewritten as a richer client
+  component: agency search (Search button + Enter), clickable
+  results list with name + ID, "Selected:" display, manual-mode
+  toggle with the V1 ULID input as fallback. Hidden
+  `targetAccountId` field carries either the selected or the manual
+  value to the unchanged start action. `/impersonation` page fetches
+  initial 20 agencies server-side and passes them as the form's
+  initial state. 16 new admin tests; 189/189 admin pass; 851 root
+  pass with only the pre-existing search MinIO/DB baseline failure.
 - **ADR-029 D4 amendment — impersonation carve-out (2026-05-10).**
   `apps/admin/lib/session.ts` admits an actively-impersonating
   operator: `userClass === 'AGENCY'` is accepted only when

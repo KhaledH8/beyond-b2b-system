@@ -324,20 +324,38 @@ Server actions live in [`app/(protected)/impersonation/actions.ts`](app/(protect
 
 The typed HTTP wrapper [`lib/impersonation-client.ts`](lib/impersonation-client.ts) is server-only (`import 'server-only'`) and consumes `apiFetch` for bearer handling + `cache: 'no-store'` + typed error hierarchy. Client components never import it; the boundary scan asserts this.
 
-### V1 limitation: raw account ID input
+### V1.1 — agency selector (2026-05-13)
 
-There is **no agency selector / typeahead** yet. The start form accepts a raw 26-character ULID for `targetAccountId`. The helper text tells operators to paste from a support ticket. This is a deliberate scope call: the selector requires a new backend endpoint (`GET /admin/agencies?q=…`) that does not exist. Operators rely on the support workflow to surface the agency's accountId.
+The start form now defaults to an **agency selector** instead of raw ULID
+input. The selector is a server-rendered list of the top 20 active AGENCY
+accounts in the operator's tenant, with a Search button that re-queries
+the backend (`GET /admin/agencies?q=…&limit=20`) on demand. The operator
+clicks an agency to select it; the chosen ULID is the value submitted to
+the start action.
 
-The backend is still authoritative — it validates AGENCY type, same tenant, and active status. A wrong ULID returns 403/404; the form shows a clear message.
+A **manual fallback** remains: a "Or enter the account ULID manually"
+toggle swaps the selector for the same Input field the V1 form had.
+Manual mode is the path when the selector is unavailable (network /
+permission failure) or when the agency isn't in the current page.
 
-A future slice will add the selector once a tenant-scoped agency-search endpoint lands.
+The backend is still authoritative — it validates AGENCY type, same
+tenant, and active status. The selector endpoint (`GET /admin/agencies`)
+is gated by `IMPERSONATE_AGENCY_ACCOUNT` (same permission as
+`POST /impersonation/start`), tenant-scoped via `AuthContext`, and
+hard-filters to `account_type = 'AGENCY'` + `status = 'ACTIVE'`. See
+`apps/api/src/admin-agencies/`.
+
+What is **not** in V1.1 (deferred):
+- Advanced filters (e.g. region, parent account, last-seen).
+- Pagination beyond the first 50 results (the backend caps `limit` at 50).
+- Live debounced search (Search runs on Enter or button click).
 
 ## What this app does NOT do (yet)
 
 ADR-029 §D11 / D12. None of these ship in V0.1:
 
-- ✓ ADR-027 impersonation UI v1 — implemented (banner + start/stop/active page).
-- No agency-account selector / typeahead — raw ULID input only.
+- ✓ ADR-027 impersonation UI — implemented (banner + start/stop/active page).
+- ✓ ADR-027 V1.1 agency selector — implemented (server-rendered list + Search + manual fallback).
 - No role-management UI.
 - No audit-event read UI.
 - No agency portal (that lives in `apps/b2b-portal`).
