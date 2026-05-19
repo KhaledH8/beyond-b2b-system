@@ -51,6 +51,18 @@ export interface BookingSupplierBookedPayload {
   readonly supplierStatus: 'CONFIRMED' | 'ON_REQUEST';
   readonly mode: 'FIXTURE';
 }
+export interface BookingDocumentCreatedPayload {
+  readonly documentId: string;
+  readonly bookingId: string;
+  readonly tenantId: string;
+  readonly documentType: 'BB_BOOKING_CONFIRMATION';
+  readonly documentNumber: string;
+  readonly status: 'ISSUED';
+  readonly contentHash: string;
+  readonly objectStorageKey: string;
+  readonly sequenceId: string;
+  readonly allocatedNumber: string;
+}
 export interface BookingConfirmedPayload {
   readonly bookingId: string;
   /**
@@ -177,6 +189,7 @@ export type AuditEventInput =
   | { category: 'APP'; kind: 'BOOKING_CREATED';     tenantId: string; targetId: string; payload: BookingCreatedPayload }
   | { category: 'APP'; kind: 'BOOKING_SUPPLIER_BOOKED'; tenantId: string; targetId: string; payload: BookingSupplierBookedPayload }
   | { category: 'APP'; kind: 'BOOKING_CONFIRMED';   tenantId: string; targetId: string; payload: BookingConfirmedPayload }
+  | { category: 'APP'; kind: 'BOOKING_DOCUMENT_CREATED'; tenantId: string; targetId: string; payload: BookingDocumentCreatedPayload }
   | { category: 'APP'; kind: 'BOOKING_CANCELLED';   tenantId: string; targetId: string; payload: BookingCancelledPayload }
   | { category: 'APP'; kind: 'LEDGER_ENTRY_POSTED'; tenantId: string; targetId: string; payload: LedgerEntryPostedPayload }
   | { category: 'APP'; kind: 'MARKUP_RULE_EDITED';  tenantId: string; targetId: string; payload: MarkupRuleEditedPayload }

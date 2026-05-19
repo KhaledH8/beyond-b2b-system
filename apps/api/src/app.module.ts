@@ -10,6 +10,7 @@ import { AdminAuditModule } from './admin-audit/admin-audit.module';
 import { DirectContractsModule } from './direct-contracts/direct-contracts.module';
 import { FxModule } from './fx/fx.module';
 import { BookingModule } from './booking/booking.module';
+import { DocumentsModule } from './documents/documents.module';
 import { AuthModule } from './auth/auth.module';
 import { AuditModule } from './audit/audit.module';
 import { RequestIdMiddleware } from './audit/request-id.middleware';
@@ -27,6 +28,7 @@ import { RequestIdMiddleware } from './audit/request-id.middleware';
     DirectContractsModule,
     FxModule,
     BookingModule,
+    DocumentsModule,
     AuthModule,
     AuditModule,
   ],

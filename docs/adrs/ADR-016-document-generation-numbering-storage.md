@@ -467,3 +467,58 @@ allocation is audited to `AuditLog`:
   controls — Phase 3 alongside admin console work.
 - **Template authoring UX** — for Phase 3 admin; MVP ships with
   built-in defaults editable only via deploy.
+
+## Amendment — 2026-05-19: Booking Documents Foundation Slice 1 (implemented)
+
+First concrete implementation of this ADR, deliberately the smallest
+safe slice: a backend-only **structured-JSON** `BB_BOOKING_CONFIRMATION`
+(a `COMMERCIAL_DOC`, not a legal tax document).
+
+- **Tables.** Two additive `doc_`-prefixed tables only:
+  - `doc_number_sequence` — `UNIQUE(tenant_id, document_type,
+    scope_key)`. For `BB_BOOKING_CONFIRMATION`, `scope_key = 'TENANT'`
+    and the counter is **monotonic, explicitly NOT gapless**: it is
+    incremented inside the issuing transaction by an atomic
+    `INSERT … ON CONFLICT DO UPDATE … RETURNING`, so a rolled-back
+    issue rolls the increment back, but a committed-then-superseded
+    number is never reused. Gaplessness is a `LEGAL_TAX_DOC`
+    requirement and is deferred with the tax-engine ADR.
+  - `doc_booking_document` — `UNIQUE(booking_id, document_type)`,
+    immutable once `status = 'ISSUED'` (BEFORE UPDATE/DELETE trigger
+    `doc_booking_document_immutable()`).
+  - Deliberately **not** created yet: `doc_legal_entity`,
+    `doc_template`, `doc_delivery_attempt`, `doc_issue_policy`, any
+    tax-invoice table.
+- **Document number format.** `BB-CONF-<YYYY>-<NNNNN>` — `<YYYY>` is
+  the UTC issue year (display only; the sequence is not reset per
+  year), `<NNNNN>` is the monotonic counter zero-padded to a minimum
+  of 5 digits. Numbers are never derived from `Booking.id` or
+  timestamps (CLAUDE.md §10).
+- **Content source.** Built **only** from immutable booking-time
+  snapshots pinned at `CONFIRMED` (ADR-021 Slice 2 tables) plus the
+  `booking_booking` header. Mutable live `offer_sourced_*` / search
+  tables are never read. Missing pinned offer snapshot → 422 (fail
+  safe).
+- **Storage.** Canonical JSON, content-addressed by sha256, written
+  to the existing `ObjectStorageModule` (MinIO/S3) at
+  `documents/<tenantId>/<documentType>/<YYYY>/<MM>/<DD>/<sha256>.json`,
+  **before** the DB transaction. A rolled-back issue leaves at most a
+  harmless content-addressed orphan; a committed row never lacks its
+  bytes.
+- **Audit.** Durable `BOOKING_DOCUMENT_CREATED` (APP) via
+  `emitInTransaction` in the issuing transaction; audit failure rolls
+  back the document row and the number allocation. No Logger-only
+  audit.
+- **Idempotency.** Key is `(bookingId, BB_BOOKING_CONFIRMATION)`. A
+  replay returns the existing document with no new number, no new
+  blob, and no second audit event.
+- **Ownership / boundary.** The endpoint
+  `POST /internal/documents/booking-confirmation` is **documents-owned**
+  (ADR-011: the `booking` module must not import `documents`).
+  `documents` reads booking-owned tables by parameterised SQL.
+- **Still deferred (each its own later slice):** PDF/HTML rendering,
+  email/delivery, public download links, `BB_VOUCHER`,
+  `TAX_INVOICE`/`CREDIT_NOTE`/`DEBIT_NOTE` + gapless legal sequences +
+  `LegalEntity`, reseller-branded guest documents (ADR-017),
+  supersession/regeneration, the async document-issue worker
+  (issue is a synchronous internal endpoint in this slice).

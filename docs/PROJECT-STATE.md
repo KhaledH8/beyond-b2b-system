@@ -4,10 +4,12 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-19 (Booking Truth Slice 3 — fixture-only
-  supplier booking step + `BOOKING_SUPPLIER_BOOKED`; Slice 2 ADR-021
-  booking-time snapshots; Slice 1 intake; ADR-028 audit read LIST;
-  ADR-029 step 6 layout v0; ADR-027 V1.0 e2e + TTL/tenant hardening)
+- **Last updated:** 2026-05-19 (Booking Documents Foundation Slice 1 —
+  structured-JSON `BB_BOOKING_CONFIRMATION` + `doc_` tables +
+  `BOOKING_DOCUMENT_CREATED`; Booking Truth Slice 3 fixture-only
+  supplier booking; Slice 2 ADR-021 booking-time snapshots; Slice 1
+  intake; ADR-028 audit read LIST; ADR-029 step 6 layout v0; ADR-027
+  V1.0 e2e + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -257,6 +259,33 @@ rule in `CLAUDE.md` §11.
   ADR-021 booking-time snapshots + `BOOKING_CONFIRMED` applied inside
   the confirmation transaction. Confirm behaviour is unchanged by
   Slice 3 (supplier-book is an independent step).
+
+### Documents
+- Booking Documents Foundation (Slice 1, 2026-05-19, ADR-016):
+  additive `doc_`-prefixed migration adding `doc_number_sequence`
+  (per `(tenant, document_type, scope_key)` counter, **monotonic, not
+  gapless**) and `doc_booking_document` (one issued document per
+  `(booking_id, document_type)`, immutable once ISSUED — BEFORE
+  UPDATE/DELETE trigger). New **documents-owned** module + endpoint
+  `POST /internal/documents/booking-confirmation` (`InternalAuthGuard`)
+  that issues a backend-only **structured-JSON**
+  `BB_BOOKING_CONFIRMATION` for a CONFIRMED booking. Content is built
+  **only** from immutable booking-time snapshots pinned at confirm
+  (Slice 2 tables) plus the `booking_booking` header — mutable live
+  supply / search tables are never read. The JSON blob is
+  content-addressed (sha256) and written to the existing
+  `ObjectStorageModule` (MinIO/S3) **before** the DB tx; the number is
+  allocated by an atomic upsert and the ISSUED row + a durable
+  `BOOKING_DOCUMENT_CREATED` audit (`emitInTransaction`) are written
+  in one short tx. Idempotent on `(bookingId, BB_BOOKING_CONFIRMATION)`:
+  replay returns the existing document with no new number, blob, or
+  audit. Document number format `BB-CONF-<YYYY>-<NNNNN>`. ADR-011
+  import direction respected: the `booking` module does not import
+  `documents`; `documents` reads booking tables by parameterised SQL.
+  - Still **not** implemented: PDF/HTML rendering, email/delivery,
+    public download links, `BB_VOUCHER`, `TAX_INVOICE`/legal-tax
+    sequences/legal-entity, reseller-branded guest documents,
+    supersession/regeneration, the async document-issue worker, UI.
 
 ### Admin & internal
 - `InternalAuthGuard` + `@Actor()` on every `/internal/...` endpoint
@@ -594,8 +623,17 @@ Candidate slices, picked by priority call:
   machine so supplier-book/confirm are properly ordered and a
   `SUPPLIER_BOOKED` state exists with compensation; (b) live
   Hotelbeds `book()` + certification; (c) `cancel()` /
-  cancellation-refund compensation. Payment, ledger, documents
-  remain out of scope until their own slices.
+  cancellation-refund compensation. Payment, ledger remain out of
+  scope until their own slices.
+- **Documents Slice 2+** — backend track. Slice 1 is shipped
+  (structured-JSON `BB_BOOKING_CONFIRMATION`, `doc_number_sequence` +
+  `doc_booking_document`). Remaining document work, each its own
+  slice: (a) async document-issue worker consuming booking events
+  (outside the saga); (b) PDF/HTML rendering + delivery (email /
+  download); (c) `BB_VOUCHER` (needs pinned hotel display content,
+  not yet snapshotted); (d) `TAX_INVOICE`/`CREDIT_NOTE`/`DEBIT_NOTE`
+  gapless legal-tax sequences + `doc_legal_entity` (blocked on the
+  tax-engine ADR); (e) reseller-branded guest documents (ADR-017).
 - **ADR-027 impersonation UI** — frontend track. First feature slice
   on top of the ADR-029 foundation (complete). Persistent
   `<Banner variant="danger">` in the `<SystemBanner />` slot on

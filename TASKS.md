@@ -10,6 +10,36 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **Booking Documents Foundation — Slice 1: structured-JSON
+      `BB_BOOKING_CONFIRMATION` (2026-05-19, ADR-016).**
+      - Additive `doc_`-prefixed migration
+        `20260519000003_document_foundation.ts`: `doc_number_sequence`
+        (`UNIQUE(tenant_id, document_type, scope_key)`, monotonic /
+        NOT gapless) + `doc_booking_document`
+        (`UNIQUE(booking_id, document_type)`, immutable once ISSUED
+        via BEFORE UPDATE/DELETE trigger). `down()` reverses.
+      - New documents-owned module (`apps/api/src/documents/`):
+        `DocumentContentRepository` (reads `booking_booking` +
+        booking-time snapshot tables by SQL — no `booking` import),
+        `DocumentRepository` (atomic upsert number allocation + ISSUED
+        insert), `DocumentStorage` (content-addressed JSON →
+        `ObjectStorageModule`), `BookingConfirmationService`,
+        `DocumentsController`.
+      - `POST /internal/documents/booking-confirmation`
+        (`InternalAuthGuard`): 404 unknown booking, 422 non-CONFIRMED
+        / no pinned offer snapshot, 400 bad body. Blob written before
+        the DB tx; number + ISSUED row + durable
+        `BOOKING_DOCUMENT_CREATED` (`emitInTransaction`) in one tx.
+        Idempotent on `(bookingId, BB_BOOKING_CONFIRMATION)`.
+      - Audit: new `BOOKING_DOCUMENT_CREATED` APP kind + payload.
+      - `DocumentsModule` registered in `app.module.ts`.
+      - Tests: service unit (16), repository integration (7),
+        controller/e2e integration (6). Regression: booking + audit
+        (139) green. Typecheck + lint clean.
+      - Out of scope (later slices): PDF/HTML, email/delivery, public
+        URLs, `BB_VOUCHER`, tax invoices/legal sequences, reseller
+        branding, async document worker, UI.
+
 - [x] **Booking Truth — Slice 3: supplier booking, fixture mode
       (2026-05-19).**
       - Additive migration

@@ -299,3 +299,24 @@ infra/
 
 Booking-time snapshot tables (`booking_*_snapshot`) live under
 existing `infra/migrations/booking/`.
+
+## Amendment 2026-05-19 (see ADR-016) — documents ⊥ booking import edge
+
+Booking Documents Foundation Slice 1 makes the `doc_` prefix
+ownership concrete and pins the cross-module direction:
+
+- The **`booking` module must not import the `documents` module**, and
+  the reverse import edge is also kept out. Document issue is owned by
+  `documents`; the endpoint
+  `POST /internal/documents/booking-confirmation` lives there, not on
+  `BookingController`.
+- `documents` reads booking-owned tables (`booking_booking`,
+  `booking_*_snapshot`) by **parameterised SQL** via
+  `DocumentContentRepository`. Cross-module table reads by SQL are
+  permitted here because the document is a read-only projection of
+  already-pinned, immutable booking truth; no `doc_` table is ever
+  written by `booking`, and no `booking_` table is ever written by
+  `documents`.
+- Migrations: `doc_`-prefixed tables live under
+  `infra/migrations/documents/`, discovered by the existing
+  `ModuleMigrationSource` filename-timestamp ordering.

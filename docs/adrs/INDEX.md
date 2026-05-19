@@ -44,7 +44,7 @@ Status legend:
 
 | ADR | Title | Status | Controls | Depends on |
 |---|---|---|---|---|
-| ADR-016 | Document generation, numbering, storage | Accepted | Document types; gapless tax-doc sequences per (legal entity, jurisdiction, fiscal year); object storage; immutable issued docs; document workers outside saga. | ADR-006, ADR-010, ADR-012 |
+| ADR-016 | Document generation, numbering, storage | Accepted (amended 2026-05-19 Booking Documents Foundation Slice 1 implemented) | Document types; gapless tax-doc sequences per (legal entity, jurisdiction, fiscal year); object storage; immutable issued docs; document workers outside saga. Slice 1: structured-JSON `BB_BOOKING_CONFIRMATION` + `doc_number_sequence`/`doc_booking_document` + `BOOKING_DOCUMENT_CREATED`; PDF/voucher/tax-doc/delivery/async-worker deferred. | ADR-006, ADR-010, ADR-012 |
 | ADR-017 | Reseller billing, resale controls, branded documents | Accepted (amended by ADR-018, ADR-020) | `ResellerProfile` capability on AGENCY/SUBSCRIBER; versioned billing/tax/branding/resale-rule/display profiles; branding fallback chain. | ADR-006, ADR-012, ADR-016 |
 | ADR-018 | Reseller collections, balances, reserves, payouts | Accepted | Three settlement modes; two reseller wallet books; earnings state machine; KYC/KYB + sanctions/PEP gating for `PAYOUT_ELIGIBLE`. | ADR-012, ADR-017 |
 | ADR-019 | *(unused number — skipped intentionally)* | — | — | — |
