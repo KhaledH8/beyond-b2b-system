@@ -4,9 +4,9 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-19 (Booking Intake Slice 1 —
-  `POST /internal/bookings`, additive intake migration,
-  `BOOKING_CREATED` audit in-transaction; ADR-028 audit read LIST;
+- **Last updated:** 2026-05-19 (Booking Truth Slice 2 — ADR-021
+  booking-time snapshot pinning at CONFIRMED + `BOOKING_CONFIRMED`
+  in-transaction; Booking Intake Slice 1; ADR-028 audit read LIST;
   ADR-029 step 6 layout v0; ADR-027 V1.0 e2e + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
@@ -211,13 +211,29 @@ rule in `CLAUDE.md` §11.
   data (proven by a create→confirm integration test).
   - Supplier `book()`, payment, ledger, documents, and
     cancellation/refund are **not** implemented in this slice.
-  - ADR-021 booking-time snapshot pinning at `CONFIRMED`
-    (immutable sourced/authored + cancellation-policy + tax/fee
-    snapshots) remains the **next** booking-truth slice;
-    `source_offer_snapshot_id` here is a soft intake/reconciliation
-    link, not the immutable booking-time snapshot.
-- Internal booking-confirm endpoint as the first saga step; FX lock
-  applied inside the confirmation transaction.
+- Booking-time snapshot pinning (Slice 2, 2026-05-19): additive
+  migration adding four immutable tables —
+  `booking_sourced_offer_snapshot` (1:1 per booking),
+  `booking_sourced_price_component_snapshot`,
+  `booking_cancellation_policy_snapshot`,
+  `booking_tax_fee_snapshot` (TAX/FEE denormalised per CLAUDE.md §12).
+  A BEFORE UPDATE/DELETE trigger makes every snapshot row write-once.
+  `BookingService.confirm` now, **inside the existing confirm
+  transaction** (status flip + FX lock): re-reads the live
+  `offer_sourced_*` rows for the booking's `source_offer_snapshot_id`,
+  copies them into the booking-time tables, and emits a durable
+  `BOOKING_CONFIRMED` audit event via `emitInTransaction`. If any pin
+  or the audit fails, the booking does **not** become CONFIRMED.
+  Confirm refuses pre-tx when `source_offer_snapshot_id` is null (400)
+  and rolls back (409) when the live source snapshot is gone. The
+  idempotent already-CONFIRMED fast-path pins nothing and emits no
+  second audit. `source_offer_snapshot_id` is now the trace key from
+  booking-time truth back to the (prunable) live snapshot.
+  - Still **not** implemented: supplier `book()`, payment, ledger,
+    documents, cancellation/refund, full ADR-010 saga, UI.
+- Internal booking-confirm endpoint as the first saga step; FX lock +
+  ADR-021 booking-time snapshots + `BOOKING_CONFIRMED` applied inside
+  the confirmation transaction.
 
 ### Admin & internal
 - `InternalAuthGuard` + `@Actor()` on every `/internal/...` endpoint
@@ -546,15 +562,16 @@ formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 Candidate slices, picked by priority call:
 
-- **ADR-021 booking-time snapshot pinning at `CONFIRMED`** — backend
-  track, next booking-truth slice. Add immutable
-  `booking_sourced_offer_snapshot` / `booking_authored_rate_snapshot`
-  / `booking_cancellation_policy_snapshot` / `booking_tax_fee_snapshot`
-  and pin exactly one offer-shape snapshot + cancellation policy +
-  tax/fee in the existing `CONFIRMED` transaction, plus a
-  `BOOKING_CONFIRMED` audit emit. Booking Intake (Slice 1) is shipped;
-  bookings now exist in `INITIATED` but carry no immutable record of
-  what was sold — this is the highest-remaining booking-truth gap.
+- **Booking Truth Slice 3 — supplier `book()` (fixture mode first)**
+  — backend track, next booking-truth slice. Bookings now intake
+  (`INITIATED`) and confirm with pinned ADR-021 booking-time truth +
+  `BOOKING_CONFIRMED`, but no supplier reservation is ever made:
+  `HotelbedsAdapter.book()` still throws `HotelbedsNotImplementedError`.
+  Next is a fixture-mode `book()` wired into confirm (provisional →
+  supplier confirmation ref on `booking_booking`) with its own
+  rollback semantics — still no real payment/ledger/documents.
+  (Slices 1 + 2 are shipped; the immutable record of what was sold
+  now exists.)
 - **ADR-027 impersonation UI** — frontend track. First feature slice
   on top of the ADR-029 foundation (complete). Persistent
   `<Banner variant="danger">` in the `<SystemBanner />` slot on

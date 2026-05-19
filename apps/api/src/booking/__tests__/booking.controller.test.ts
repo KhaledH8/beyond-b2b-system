@@ -73,17 +73,59 @@ describeIntegration('POST /internal/bookings/:id/confirm', () => {
          VALUES ($1, 'Booking Ctrl Hotel', 'AE')`,
       [canonicalHotelId],
     );
+    // Confirm now pins ADR-021 booking-time truth, so a confirmable
+    // booking needs a live source offer snapshot to copy from.
+    const supplierId = newUlid();
+    const sourceOfferSnapshotId = newUlid();
+    await pool.query(
+      `INSERT INTO supply_supplier (id, code, display_name, source_type)
+         VALUES ($1, $2, 'Booking Ctrl Supplier', 'AGGREGATOR')`,
+      [supplierId, `sup-${slug}`],
+    );
+    await pool.query(
+      `INSERT INTO offer_sourced_snapshot (
+         id, tenant_id, supplier_id, canonical_hotel_id,
+         supplier_hotel_code, supplier_rate_key, search_session_id,
+         check_in, check_out, occupancy_adults,
+         supplier_room_code, supplier_rate_code,
+         total_amount_minor_units, total_currency,
+         rate_breakdown_granularity, valid_until,
+         raw_payload_hash, raw_payload_storage_ref
+       ) VALUES (
+         $1,$2,$3,$4,'HB','rk',$5,
+         '2026-06-01','2026-06-03',2,'DBL','BAR',
+         10000,'USD','TOTAL_ONLY', now() + interval '1 hour',
+         $6,'s3://r'
+       )`,
+      [
+        sourceOfferSnapshotId,
+        tenantId,
+        supplierId,
+        canonicalHotelId,
+        newUlid(),
+        'a'.repeat(64),
+      ],
+    );
+    await pool.query(
+      `INSERT INTO offer_sourced_component (
+         id, offer_snapshot_id, component_kind, description,
+         amount_minor_units, currency, inclusive
+       ) VALUES
+         ($1,$2,'ROOM_RATE','Room',9000,'USD',FALSE),
+         ($3,$2,'TAX','Tax',1000,'USD',FALSE)`,
+      [newUlid(), sourceOfferSnapshotId, newUlid()],
+    );
     await pool.query(
       `INSERT INTO booking_booking (
          id, tenant_id, account_id, canonical_hotel_id,
          collection_mode, supplier_settlement_mode, payment_cost_model,
          check_in, check_out, reference, status,
-         sell_amount_minor_units, sell_currency
+         sell_amount_minor_units, sell_currency, source_offer_snapshot_id
        ) VALUES (
          $1, $2, $3, $4,
          'BB_COLLECTS', 'PREPAID_BALANCE', 'PLATFORM_CARD_FEE',
          '2026-06-01', '2026-06-03', $5, $6,
-         $7, $8
+         $7, $8, $9
        )`,
       [
         bookingId,
@@ -96,6 +138,7 @@ describeIntegration('POST /internal/bookings/:id/confirm', () => {
           ? 10000
           : opts.sellAmountMinorUnits,
         opts.sellCurrency === undefined ? 'USD' : opts.sellCurrency,
+        sourceOfferSnapshotId,
       ],
     );
     return bookingId;

@@ -1088,3 +1088,22 @@ The amendment is doc + migration scope only.
   under concurrent confirms is a saga-side concern (idempotent
   decrement in the `CONFIRMED` transaction); spec'd here but
   implemented with the Phase 3 adapter work.
+
+## Amendment 2026-05-19 (Booking Truth — Slice 2: sourced pinning implemented)
+
+The sourced-path booking-time snapshot tables defined here are now
+implemented and pinned at `CONFIRMED` (see ADR-010 amendment
+2026-05-19 for the transaction shape and divergences). Summary:
+
+- Implemented: `booking_sourced_offer_snapshot` (1:1 per booking),
+  `booking_sourced_price_component_snapshot`,
+  `booking_cancellation_policy_snapshot`, `booking_tax_fee_snapshot`.
+  All immutable via a BEFORE UPDATE/DELETE trigger.
+- `booking_tax_fee_snapshot` is a denormalised copy of the TAX/FEE
+  `offer_sourced_component` subset (the sourced model has no separate
+  tax/fee source table); the full component set is also copied.
+- The `AUTHORED_PRIMITIVES` path (`booking_authored_rate_snapshot`)
+  remains design-locked, not implemented — no authored supply source
+  is confirmed end-to-end yet. The two-code-path rule is unchanged.
+- Booking-time tables carry `source_*_id` trace columns but no FK to
+  `offer_sourced_*`; booking truth outlives source pruning.

@@ -17,7 +17,9 @@ import {
   type BookingFxLockInput,
 } from '../fx/booking-fx-lock.repository';
 import { newUlid } from '../common/ulid';
+import { AuditService } from '../audit/audit.service';
 import { BookingRepository } from './booking.repository';
+import { BookingSnapshotRepository } from './booking-snapshot.repository';
 
 export interface ConfirmBookingInput {
   readonly bookingId: string;
@@ -134,6 +136,10 @@ export class BookingService {
     private readonly resolver: BookingFxLockResolver,
     @Inject(BookingFxLockRepository)
     private readonly lockRepository: BookingFxLockRepository,
+    @Inject(BookingSnapshotRepository)
+    private readonly snapshotRepository: BookingSnapshotRepository,
+    @Inject(AuditService)
+    private readonly auditService: AuditService,
   ) {}
 
   async confirm(input: ConfirmBookingInput): Promise<ConfirmBookingResult> {
@@ -182,6 +188,18 @@ export class BookingService {
             `(sell_amount_minor_units or sell_currency is null)`,
         );
       }
+      if (existing.sourceOfferSnapshotId === null) {
+        // ADR-021 booking-truth policy (Slice 2): a sourced booking
+        // cannot reach CONFIRMED without a source offer snapshot to
+        // pin. Intake (Slice 1) always records this; a null here means
+        // the booking predates intake or was created out-of-band.
+        throw new BadRequestException(
+          `Cannot confirm booking ${input.bookingId}: ` +
+            `source_offer_snapshot_id is not set; booking-time truth ` +
+            `cannot be pinned`,
+        );
+      }
+      const sourceOfferSnapshotId = existing.sourceOfferSnapshotId;
 
       sourceCurrency = existing.sellCurrency;
       const sourceMinor = existing.sellAmountMinorUnits;
@@ -200,6 +218,7 @@ export class BookingService {
         });
       }
 
+      let fxLockId: string | null = null;
       const client = await this.pool.connect();
       try {
         await client.query('BEGIN');
@@ -213,13 +232,98 @@ export class BookingService {
             `Booking ${input.bookingId} state changed during confirm; retry`,
           );
         }
+
+        // ── ADR-021 booking-time truth pinning (Slice 2) ───────────
+        // All in the same transaction as the status flip + FX lock:
+        // if any pin fails, the booking does not become CONFIRMED.
+        const src = await this.snapshotRepository.loadSourceOfferSnapshot(
+          client,
+          existing.tenantId,
+          sourceOfferSnapshotId,
+        );
+        if (!src) {
+          throw new ConflictException(
+            `Cannot confirm booking ${input.bookingId}: source offer ` +
+              `snapshot ${sourceOfferSnapshotId} not found (expired or ` +
+              `pruned before confirm); booking-time truth cannot be pinned`,
+          );
+        }
+        const bookingOfferSnapshotId =
+          await this.snapshotRepository.insertBookingSourcedOfferSnapshot(
+            client,
+            {
+              bookingId: existing.id,
+              tenantId: existing.tenantId,
+              sourceOfferSnapshotId,
+              source: src,
+            },
+          );
+        const components =
+          await this.snapshotRepository.loadSourceComponents(client, src.id);
+        await this.snapshotRepository.insertBookingPriceComponentSnapshots(
+          client,
+          {
+            bookingId: existing.id,
+            bookingOfferSnapshotId,
+            components,
+          },
+        );
+        await this.snapshotRepository.insertBookingTaxFeeSnapshots(client, {
+          bookingId: existing.id,
+          bookingOfferSnapshotId,
+          components,
+        });
+        const policy =
+          await this.snapshotRepository.loadSourceCancellationPolicy(
+            client,
+            src.id,
+          );
+        if (policy) {
+          await this.snapshotRepository.insertBookingCancellationPolicySnapshot(
+            client,
+            {
+              bookingId: existing.id,
+              bookingOfferSnapshotId,
+              source: policy,
+            },
+          );
+        }
+
         if (
           decision.kind === 'STRIPE_FX_QUOTE' ||
           decision.kind === 'SNAPSHOT_REFERENCE'
         ) {
           const lockInput = decisionToLockInput(decision, input.bookingId);
+          fxLockId = lockInput.id;
           await this.lockRepository.insert(client, lockInput);
         }
+
+        // Durable BOOKING_CONFIRMED in the same transaction. A failed
+        // audit insert rolls the whole confirm back — a confirmed
+        // booking is never committed without its audit trail.
+        await this.auditService.emitInTransaction(client, {
+          category: 'APP',
+          kind: 'BOOKING_CONFIRMED',
+          tenantId: existing.tenantId,
+          targetId: existing.id,
+          payload: {
+            bookingId: existing.id,
+            supplierId: existing.supplierRef ?? '',
+            tenantId: existing.tenantId,
+            accountId: existing.accountId,
+            bookingReference: existing.reference,
+            sourceOfferSnapshotId,
+            supplier: existing.supplierRef ?? '',
+            supplierRawRef: existing.supplierRawRef ?? '',
+            sellAmountMinorUnits: (
+              existing.sellAmountMinorUnits ?? 0n
+            ).toString(),
+            sellCurrency: existing.sellCurrency ?? '',
+            fxLockId,
+            status: 'CONFIRMED',
+          },
+        });
+
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK').catch(() => undefined);

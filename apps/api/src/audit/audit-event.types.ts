@@ -43,7 +43,23 @@ export interface BookingCreatedPayload {
 }
 export interface BookingConfirmedPayload {
   readonly bookingId: string;
+  /**
+   * Retained for backward compatibility. Populated from the booking's
+   * `supplier_ref` (the supplier identifier selected at intake);
+   * `supplier` below carries the same value with a clearer name.
+   */
   readonly supplierId: string;
+  readonly tenantId: string;
+  readonly accountId: string;
+  readonly bookingReference: string;
+  readonly sourceOfferSnapshotId: string | null;
+  readonly supplier: string;
+  readonly supplierRawRef: string;
+  readonly sellAmountMinorUnits: string;
+  readonly sellCurrency: string;
+  /** FX-lock row id when one was written this confirm; null otherwise. */
+  readonly fxLockId: string | null;
+  readonly status: 'CONFIRMED';
 }
 export interface BookingCancelledPayload {
   readonly bookingId: string;

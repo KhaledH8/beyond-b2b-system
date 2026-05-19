@@ -28,10 +28,10 @@ function makeMockClient(queryFn = vi.fn().mockResolvedValue({ rows: [], rowCount
 
 const APP_EVENT: AuditEventInputBackground = {
   category: 'APP',
-  kind: 'BOOKING_CONFIRMED',
+  kind: 'MARKUP_RULE_EDITED',
   tenantId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
   targetId: '01ARZ3NDEKTSV4RRFFQ69G5BOK',
-  payload: { bookingId: '01ARZ3NDEKTSV4RRFFQ69G5BOK', supplierId: 'hotelbeds' },
+  payload: { ruleId: '01ARZ3NDEKTSV4RRFFQ69G5RUL', changeKind: 'PATCH' },
 };
 
 const SECURITY_EVENT: AuditEventInputBackground = {

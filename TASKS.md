@@ -10,6 +10,52 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **Booking Truth — Slice 2: ADR-021 booking-time snapshot
+      pinning at CONFIRMED + BOOKING_CONFIRMED (2026-05-19).**
+      - Additive migration `20260519000001_booking_time_snapshots.ts`:
+        four immutable tables — `booking_sourced_offer_snapshot`
+        (1:1 per booking, UNIQUE booking_id),
+        `booking_sourced_price_component_snapshot`,
+        `booking_cancellation_policy_snapshot`,
+        `booking_tax_fee_snapshot` (TAX/FEE denormalised per
+        CLAUDE.md §12). BEFORE UPDATE/DELETE trigger
+        `booking_snapshot_immutable()` makes every row write-once.
+        Purely additive; `down()` drops triggers/function/tables.
+      - `booking-snapshot.repository.ts`: tenant-scoped reads of
+        `offer_sourced_snapshot` / `_component` /
+        `_cancellation_policy`; parameterised inserts of the four
+        booking-time tables; `snapshotExistsForBooking`.
+      - `BookingService.confirm` extended: pre-tx 400 when
+        `source_offer_snapshot_id` is null; in the existing confirm
+        transaction (after the markConfirmed gate, with the FX lock):
+        load source snapshot (409 + rollback if gone), pin offer +
+        all components + TAX/FEE + cancellation policy, then emit
+        `BOOKING_CONFIRMED` via `emitInTransaction`. Any failure →
+        rollback, booking stays not-CONFIRMED. Idempotent
+        already-CONFIRMED fast-path pins nothing, emits no audit.
+      - `audit-event.types.ts`: `BookingConfirmedPayload` extended
+        backward-compatibly (kept `bookingId`/`supplierId`; added
+        tenantId, accountId, bookingReference, sourceOfferSnapshotId,
+        supplier, supplierRawRef, sellAmount*, fxLockId, status).
+      - `booking.repository.ts`: `BookingRecord`/`loadById` extended
+        with accountId, reference, sourceOfferSnapshotId, supplierRef,
+        supplierRawRef (confirm-time context).
+      - Tests: new `booking-snapshot.repository.test.ts` (real DB:
+        tenant-scoped read, pin offer/component/tax/policy, 1:1
+        rejection, immutability trigger blocks UPDATE/DELETE); new
+        `BookingService.confirm — snapshot pinning` unit suite
+        (pin+audit-in-tx ordering, fxLockId in payload, null-source
+        guard, source-gone rollback, snapshot-fail rollback,
+        audit-fail rollback, replay no-op); existing service +
+        repository tests updated for the two new constructor deps and
+        seed an offer snapshot; intake controller create→confirm now
+        asserts booking-time rows + both audit events; audit test
+        `APP_EVENT` switched to `MARKUP_RULE_EDITED`.
+      - **Not** in this slice: supplier `book()`, payment, ledger,
+        documents, cancellation/refund, full ADR-010 saga, UI, Auth0,
+        JwtAuthGuard, impersonation. Authored-path booking-time
+        snapshot remains design-locked (no authored supply yet).
+
 - [x] **Booking Intake — Slice 1 (2026-05-19).** Smallest safe
       booking-truth slice. Closes the "confirm endpoint is dead code"
       gap: nothing previously created a `booking_booking` row.

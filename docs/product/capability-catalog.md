@@ -122,7 +122,8 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 | Direct contract admin CRUD | implemented | `/internal/admin/direct-contracts/...` for contracts, seasons, age bands; serializable season-overlap check; FK guards on delete. | `apps/api/src/direct-contracts/` | ADR-022 |
 | Authored Phase B (restrictions + cancellation) | implemented | Authored phase-b restrictions and cancellation schema + admin CRUD; gates authored offers in search; cancellation policies attached at search time. | `apps/api/src/direct-contracts/`, `infra/migrations/authored/` | ADR-023 |
 | Seasonal-contract layer + promotion overlay | locked-by-ADR | `rate_contract_*` and `rate_promotion_*` tables; `AuthoringMode ∈ {SEASONAL_CONTRACT, PER_DAY_STREAM}`; copy-season service. | (planned in Phase 3) | ADR-021 amendment 2026-04-23 |
-| Booking-time snapshots | locked-by-ADR | `booking_sourced_offer_snapshot`, `booking_authored_rate_snapshot`, `booking_cancellation_policy_snapshot`, `booking_tax_fee_snapshot`. Immutable; written in `CONFIRMED` transaction. | (planned in Phase 2) | ADR-021 |
+| Booking-time snapshots (sourced) | implemented | Slice 2: `booking_sourced_offer_snapshot` (1:1), `booking_sourced_price_component_snapshot`, `booking_cancellation_policy_snapshot`, `booking_tax_fee_snapshot`. Immutable (BEFORE UPDATE/DELETE trigger); pinned in the `CONFIRMED` transaction with FX lock + `BOOKING_CONFIRMED` audit. | `apps/api/src/booking/booking-snapshot.repository.ts`, `apps/api/src/booking/booking.service.ts` | ADR-021, ADR-010 (2026-05-19 amendment) |
+| Booking-time snapshots (authored) | locked-by-ADR | `booking_authored_rate_snapshot` for the AUTHORED_PRIMITIVES path; not yet exercised (no authored supply confirmed end-to-end). | (planned) | ADR-021 |
 
 ## 8. Pricing Engine
 
@@ -146,7 +147,7 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 |---|---|---|---|---|
 | Booking shell table | implemented | `booking_booking` baseline; ADR-020 triple immutable at confirmation. | `infra/migrations/booking/` | ADR-010, ADR-020 |
 | Booking intake (`POST /internal/bookings`) | implemented | Slice 1: creates `INITIATED` booking from a priced sourced offer; `BB-YYYY-NNNNN` reference; refuses missing pricing / `PROVISIONAL` rates; `BOOKING_CREATED` audit in the insert transaction; idempotent on `(tenant, idempotencyKey)`. No supplier `book()`, payment, ledger, documents, or cancellation. | `apps/api/src/booking/booking-intake.service.ts` | ADR-010 (2026-05-19 amendment), ADR-020, ADR-028 |
-| Internal booking-confirm endpoint | implemented | First step of the saga: confirms a held rate; emits FX lock derivation; attaches money-movement triple. Reachable from real data via booking intake. | `apps/api/src/booking/` | ADR-010, ADR-020 |
+| Internal booking-confirm endpoint | implemented | Confirms a held rate; in one transaction: flips status, derives FX lock, pins ADR-021 booking-time snapshots, emits durable `BOOKING_CONFIRMED`. Refuses confirm without a live source offer snapshot. Reachable from real data via booking intake. | `apps/api/src/booking/` | ADR-010, ADR-020, ADR-021, ADR-028 |
 | Booking confirmation observability | implemented | Trace + structured logging on confirm path. | `apps/api/src/booking/` | — |
 | Booking confirmation FX lookup | implemented | Reads applied FX lock at confirmation time. | `apps/api/src/booking/`, `apps/api/src/fx/` | ADR-024 |
 | Full booking saga (`SUPPLIER_BOOKED`, `PAYMENT_CAPTURED`, `DOCUMENT_ISSUED`) | planned | Phase 2 saga shape. `VCC_ISSUED` step locked for VCC_TO_PROPERTY mode. | — | ADR-010, ADR-020 |

@@ -28,6 +28,19 @@ export interface BookingRecord {
    */
   readonly sellAmountMinorUnits: bigint | null;
   readonly sellCurrency: string | null;
+  /**
+   * Confirm-time context (added Booking Truth Slice 2). `accountId` /
+   * `reference` are always present (NOT NULL on the shell);
+   * `sourceOfferSnapshotId` / `supplierRef` / `supplierRawRef` are
+   * NULL until set by booking intake (Slice 1). Confirm requires a
+   * non-null `sourceOfferSnapshotId` to pin ADR-021 booking-time
+   * truth.
+   */
+  readonly accountId: string;
+  readonly reference: string;
+  readonly sourceOfferSnapshotId: string | null;
+  readonly supplierRef: string | null;
+  readonly supplierRawRef: string | null;
 }
 
 interface BookingDbRow {
@@ -36,6 +49,11 @@ interface BookingDbRow {
   readonly status: string;
   readonly sell_amount_minor_units: string | null;
   readonly sell_currency: string | null;
+  readonly account_id: string;
+  readonly reference: string;
+  readonly source_offer_snapshot_id: string | null;
+  readonly supplier_ref: string | null;
+  readonly supplier_raw_ref: string | null;
 }
 
 /**
@@ -150,6 +168,11 @@ function rowToRecord(row: BookingDbRow): BookingRecord {
         ? null
         : BigInt(row.sell_amount_minor_units),
     sellCurrency: row.sell_currency,
+    accountId: row.account_id,
+    reference: row.reference,
+    sourceOfferSnapshotId: row.source_offer_snapshot_id,
+    supplierRef: row.supplier_ref,
+    supplierRawRef: row.supplier_raw_ref,
   };
 }
 
@@ -167,7 +190,9 @@ export class BookingRepository {
   ): Promise<BookingRecord | undefined> {
     const { rows } = await q.query<BookingDbRow>(
       `SELECT id, tenant_id, status,
-              sell_amount_minor_units, sell_currency
+              sell_amount_minor_units, sell_currency,
+              account_id, reference, source_offer_snapshot_id,
+              supplier_ref, supplier_raw_ref
          FROM booking_booking
         WHERE id = $1`,
       [bookingId],

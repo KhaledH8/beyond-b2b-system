@@ -359,3 +359,47 @@ remains the next booking-truth slice and is unaffected by this link.
 - **Skipping the `PROVISIONAL` bookability gate.** A rate whose
   money-movement triple is unresolved must never become a booking
   (ADR-020).
+
+## Amendment 2026-05-19 (Booking Truth — Slice 2)
+
+### Confirm pins ADR-021 booking-time truth in the same transaction
+
+`BookingService.confirm` now performs ADR-021 booking-time snapshot
+pinning inside the **existing** confirm transaction, alongside the
+status flip and the FX lock. In one all-or-nothing unit it: re-reads
+the live `offer_sourced_*` rows for the booking's
+`source_offer_snapshot_id`, copies them into four immutable tables
+(`booking_sourced_offer_snapshot` 1:1,
+`booking_sourced_price_component_snapshot`,
+`booking_cancellation_policy_snapshot`,
+`booking_tax_fee_snapshot`), and emits a durable `BOOKING_CONFIRMED`
+audit event via `AuditService.emitInTransaction`. Any failure (missing
+source snapshot, snapshot insert, or audit) rolls the whole confirm
+back — a booking never reaches CONFIRMED without complete, audited
+booking-time truth. This supersedes the Slice 1 note that snapshot
+pinning was "the next slice."
+
+### Deliberate divergences from a literal ADR-021 reading
+
+- **Tax/fee is a denormalised view, not a separate source.** The
+  sourced supply model has no dedicated tax/fee table; TAX and FEE are
+  `offer_sourced_component` rows. `booking_tax_fee_snapshot` (named in
+  CLAUDE.md §12) is populated by copying the TAX/FEE component subset,
+  in addition to the full component copy. It is a convenience view for
+  reconciliation/documents, not a second source of truth.
+- **Authored path not exercised.** Only the `SOURCED_COMPOSED` path is
+  pinned. `booking_authored_rate_snapshot` is intentionally not
+  created until an authored supply source is confirmed end-to-end.
+- **`source_offer_snapshot_id` is a soft trace key.** No FK from
+  booking-time tables to `offer_sourced_*`: booking truth must outlive
+  source pruning. Values are copied; the id is for tracing only.
+
+### Anti-patterns (snapshot pinning)
+
+- **Reading the live `offer_sourced_*` row for a confirmed booking.**
+  Use the pinned booking-time rows; the live row may be expired,
+  superseded, or re-parsed.
+- **Mutating a booking-time snapshot.** The immutability trigger
+  raises; corrections flow through ADR-016 credit/debit notes.
+- **Confirming a booking with no live source snapshot.** Refused
+  (409) and rolled back — never confirm with un-pinnable truth.

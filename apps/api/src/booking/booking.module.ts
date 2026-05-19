@@ -4,6 +4,7 @@ import { AuditModule } from '../audit/audit.module';
 import { FxModule } from '../fx/fx.module';
 import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
 import { BookingRepository } from './booking.repository';
+import { BookingSnapshotRepository } from './booking-snapshot.repository';
 import { BookingService } from './booking.service';
 import { BookingIntakeService } from './booking-intake.service';
 import { BookingController } from './booking.controller';
@@ -36,6 +37,7 @@ import { BookingController } from './booking.controller';
   providers: [
     InternalAuthGuard,
     BookingRepository,
+    BookingSnapshotRepository,
     BookingService,
     BookingIntakeService,
   ],

@@ -4,7 +4,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import { newUlid } from '../../common/ulid';
 import { BookingRepository } from '../booking.repository';
+import { BookingSnapshotRepository } from '../booking-snapshot.repository';
 import { BookingService } from '../booking.service';
+import { AuditService } from '../../audit/audit.service';
 import {
   BookingFxLockRepository,
 } from '../../fx/booking-fx-lock.repository';
@@ -33,6 +35,8 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   let pool: Pool;
   let repository: BookingRepository;
   let lockRepository: BookingFxLockRepository;
+  let snapshotRepository: BookingSnapshotRepository;
+  let auditService: AuditService;
 
   // Resolver is replaced per-test via `setResolverDecision`.
   let resolverDecision: BookingFxLockDecision | (() => Promise<never>);
@@ -52,13 +56,22 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   }
 
   function makeService(): BookingService {
-    return new BookingService(pool, repository, stubResolver, lockRepository);
+    return new BookingService(
+      pool,
+      repository,
+      stubResolver,
+      lockRepository,
+      snapshotRepository,
+      auditService,
+    );
   }
 
   beforeAll(() => {
     pool = new Pool({ connectionString: process.env['DATABASE_URL']! });
     repository = new BookingRepository();
     lockRepository = new BookingFxLockRepository();
+    snapshotRepository = new BookingSnapshotRepository();
+    auditService = new AuditService(pool);
     // Default: any unexpected resolver call fails the test loudly.
     setResolverDecision(async () => {
       throw new Error('resolver was not expected to be called in this test');
@@ -73,11 +86,20 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
     status: 'INITIATED' | 'PENDING_PAYMENT' | 'CONFIRMED' | 'CANCELLED';
     sellAmountMinorUnits?: number | null;
     sellCurrency?: string | null;
-  }): Promise<string> {
+    /** Leave booking_booking.source_offer_snapshot_id NULL. */
+    omitSourceOfferId?: boolean;
+    /** Set the id but do NOT insert the offer_sourced_snapshot row. */
+    omitSourceOfferRow?: boolean;
+    /** Also seed an offer_sourced_cancellation_policy for the snapshot. */
+    withCancellationPolicy?: boolean;
+    /** Number of offer_sourced_component rows to seed (incl. a TAX). */
+  }): Promise<{ bookingId: string; sourceOfferSnapshotId: string }> {
     const tenantId = newUlid();
     const accountId = newUlid();
     const canonicalHotelId = newUlid();
+    const supplierId = newUlid();
     const bookingId = newUlid();
+    const sourceOfferSnapshotId = newUlid();
     const slug = `bk-${bookingId.slice(-8).toLowerCase()}`;
 
     await pool.query(
@@ -95,16 +117,72 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
       [canonicalHotelId],
     );
     await pool.query(
+      `INSERT INTO supply_supplier (id, code, display_name, source_type)
+         VALUES ($1, $2, 'Booking Test Supplier', 'AGGREGATOR')`,
+      [supplierId, `sup-${slug}`],
+    );
+
+    if (!opts.omitSourceOfferRow) {
+      await pool.query(
+        `INSERT INTO offer_sourced_snapshot (
+           id, tenant_id, supplier_id, canonical_hotel_id,
+           supplier_hotel_code, supplier_rate_key, search_session_id,
+           check_in, check_out, occupancy_adults,
+           supplier_room_code, supplier_rate_code, supplier_meal_code,
+           total_amount_minor_units, total_currency,
+           rate_breakdown_granularity, valid_until,
+           raw_payload_hash, raw_payload_storage_ref
+         ) VALUES (
+           $1, $2, $3, $4,
+           'HB-1', 'rate-key-1', $5,
+           '2026-06-01', '2026-06-03', 2,
+           'DBL', 'BAR', 'BB',
+           10000, 'USD',
+           'TOTAL_ONLY', now() + interval '1 hour',
+           $6, 's3://raw/booking-test'
+         )`,
+        [
+          sourceOfferSnapshotId,
+          tenantId,
+          supplierId,
+          canonicalHotelId,
+          newUlid(),
+          'a'.repeat(64),
+        ],
+      );
+      await pool.query(
+        `INSERT INTO offer_sourced_component (
+           id, offer_snapshot_id, component_kind, description,
+           amount_minor_units, currency, inclusive
+         ) VALUES
+           ($1, $2, 'ROOM_RATE', 'Room', 9000, 'USD', FALSE),
+           ($3, $2, 'TAX', 'City tax', 1000, 'USD', FALSE)`,
+        [newUlid(), sourceOfferSnapshotId, newUlid()],
+      );
+      if (opts.withCancellationPolicy) {
+        await pool.query(
+          `INSERT INTO offer_sourced_cancellation_policy (
+             id, offer_snapshot_id, windows_jsonb, refundable,
+             source_verbatim_text, parsed_with
+           ) VALUES ($1, $2, '[]'::jsonb, TRUE, 'Free cxl', 'parser@1')`,
+          [newUlid(), sourceOfferSnapshotId],
+        );
+      }
+    }
+
+    await pool.query(
       `INSERT INTO booking_booking (
          id, tenant_id, account_id, canonical_hotel_id,
          collection_mode, supplier_settlement_mode, payment_cost_model,
          check_in, check_out, reference, status,
-         sell_amount_minor_units, sell_currency
+         sell_amount_minor_units, sell_currency,
+         source_offer_snapshot_id, supplier_ref, supplier_raw_ref
        ) VALUES (
          $1, $2, $3, $4,
          'BB_COLLECTS', 'PREPAID_BALANCE', 'PLATFORM_CARD_FEE',
          '2026-06-01', '2026-06-03', $5, $6,
-         $7, $8
+         $7, $8,
+         $9, 'HOTELBEDS', 'raw-ref-x'
        )`,
       [
         bookingId,
@@ -119,9 +197,10 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
           ? 10000
           : opts.sellAmountMinorUnits,
         opts.sellCurrency === undefined ? 'USD' : opts.sellCurrency,
+        opts.omitSourceOfferId ? null : sourceOfferSnapshotId,
       ],
     );
-    return bookingId;
+    return { bookingId, sourceOfferSnapshotId };
   }
 
   async function seedOxrSnapshot(): Promise<string> {
@@ -149,7 +228,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   });
 
   it('loadById returns the booking with its current status and pricing', async () => {
-    const id = await seedBooking({ status: 'INITIATED' });
+    const { bookingId: id } = await seedBooking({ status: 'INITIATED' });
     const record = await repository.loadById(pool, id);
     expect(record).toBeDefined();
     expect(record!.id).toBe(id);
@@ -161,7 +240,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   // ─── Service: same-currency confirm (no FX row) ───────────────────────────
 
   it('confirms an INITIATED booking with no FX row when source equals charge currency', async () => {
-    const id = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
+    const { bookingId: id } = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
     const result = await makeService().confirm({
       bookingId: id,
       chargeCurrency: 'USD',
@@ -181,7 +260,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   });
 
   it('confirms a PENDING_PAYMENT booking the same way', async () => {
-    const id = await seedBooking({
+    const { bookingId: id } = await seedBooking({
       status: 'PENDING_PAYMENT',
       sellCurrency: 'USD',
     });
@@ -197,7 +276,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   // ─── Service: idempotency / state guards ──────────────────────────────────
 
   it('a second confirm on the same booking returns alreadyConfirmed: true', async () => {
-    const id = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
+    const { bookingId: id } = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
     const service = makeService();
     await service.confirm({ bookingId: id, chargeCurrency: 'USD' });
     const second = await service.confirm({
@@ -208,7 +287,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   });
 
   it('refuses to confirm a CANCELLED booking', async () => {
-    const id = await seedBooking({ status: 'CANCELLED' });
+    const { bookingId: id } = await seedBooking({ status: 'CANCELLED' });
     await expect(
       makeService().confirm({ bookingId: id, chargeCurrency: 'USD' }),
     ).rejects.toThrow(/Cannot confirm.*CANCELLED/);
@@ -223,7 +302,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   // ─── Service: pricing-pinned policy (locked C5c.2) ────────────────────────
 
   it('refuses to confirm a booking with null sell_amount_minor_units', async () => {
-    const id = await seedBooking({
+    const { bookingId: id } = await seedBooking({
       status: 'INITIATED',
       sellAmountMinorUnits: null,
     });
@@ -235,7 +314,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   });
 
   it('refuses to confirm a booking with null sell_currency', async () => {
-    const id = await seedBooking({
+    const { bookingId: id } = await seedBooking({
       status: 'INITIATED',
       sellCurrency: null,
     });
@@ -247,7 +326,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   // ─── Service: full transaction with SNAPSHOT_REFERENCE FX lock ────────────
 
   it('confirms with a SNAPSHOT_REFERENCE row inserted in the same transaction', async () => {
-    const id = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
+    const { bookingId: id } = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
     const snapshotId = await seedOxrSnapshot();
     setResolverDecision({
       kind: 'SNAPSHOT_REFERENCE',
@@ -293,7 +372,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   // ─── Service: NO_LOCK_AVAILABLE — booking confirms, no FX row ─────────────
 
   it('confirms with no FX row when resolver reports NO_LOCK_AVAILABLE', async () => {
-    const id = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
+    const { bookingId: id } = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
     setResolverDecision({
       kind: 'NO_LOCK_AVAILABLE',
       reason: 'STRIPE_FAILED_AND_NO_OXR_SNAPSHOT',
@@ -318,7 +397,7 @@ describeIntegration('BookingRepository + BookingService (real DB)', () => {
   // ─── Service: roll back when FX insert violates a CHECK ──────────────────
 
   it('rolls back the booking status update when the FX-lock insert violates a CHECK', async () => {
-    const id = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
+    const { bookingId: id } = await seedBooking({ status: 'INITIATED', sellCurrency: 'USD' });
     // Craft a SNAPSHOT_REFERENCE decision with an unset rate_snapshot_id so
     // the schema's coherence CHECK rejects the insert.
     setResolverDecision({

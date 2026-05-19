@@ -28,7 +28,7 @@ Status legend:
 | ADR-007 | Tech stack (provisional) | Accepted | NestJS, Postgres+PostGIS, Redis, MinIO, pnpm + Turbo, Next.js 15. | ADR-001 |
 | ADR-008 | Hotel mapping strategy | Accepted (extended by ADR-021) | Deterministic-first mapping; reversible; auditable; conflict resolution human-in-the-loop. | ADR-002 |
 | ADR-009 | Merchandising and ranking | Accepted | Sponsored / recommended / featured tags; never mutates priced rate. | ADR-004 |
-| ADR-010 | Booking orchestration | Accepted (amended by ADR-016, ADR-020, ADR-021; 2026-05-19 Booking Intake Slice 1) | Booking saga; document workers outside saga; single-hotel cart only in MVP. Intake creates `INITIATED` (shell status set), audit in-transaction, full saga deferred. | ADR-003, ADR-004, ADR-006 |
+| ADR-010 | Booking orchestration | Accepted (amended by ADR-016, ADR-020, ADR-021; 2026-05-19 Booking Intake Slice 1 + Booking Truth Slice 2) | Booking saga; document workers outside saga; single-hotel cart only in MVP. Intake creates `INITIATED`; confirm pins ADR-021 booking-time snapshots + `BOOKING_CONFIRMED` in-transaction; full saga deferred. | ADR-003, ADR-004, ADR-006 |
 | ADR-011 | Monorepo structure | Accepted (amended by ADR-016, ADR-017, ADR-021) | Workspace layout; package boundaries; table-prefix ownership; ESLint dependency-direction. | ADR-007 |
 
 ## Wallet, Direct Connectivity, Rewards, Intelligence (ADR-012 → ADR-015)
@@ -54,7 +54,7 @@ Status legend:
 
 | ADR | Title | Status | Controls | Depends on |
 |---|---|---|---|---|
-| ADR-021 | Rate, offer, restriction, occupancy model | Accepted (amended 2026-04-23 with seasonal contract + promotion overlay) | Sourced-vs-authored shape separation; canonical product dimensions; booking-time snapshots; `OfferShape`, `RateBreakdownGranularity`, `AuthoringMode`. | ADR-002, ADR-003, ADR-004, ADR-008, ADR-010, ADR-011, ADR-013 |
+| ADR-021 | Rate, offer, restriction, occupancy model | Accepted (amended 2026-04-23 seasonal/promotion; 2026-05-19 sourced booking-time snapshots implemented) | Sourced-vs-authored shape separation; canonical product dimensions; booking-time snapshots (sourced path pinned at CONFIRMED); `OfferShape`, `RateBreakdownGranularity`, `AuthoringMode`. | ADR-002, ADR-003, ADR-004, ADR-008, ADR-010, ADR-011, ADR-013 |
 | ADR-022 | Authored direct pricing — core | Accepted | Phase A authored primitives: contracts, seasons, child age bands, base rates, occupancy + meal supplements; composite-FK same-contract enforcement. | ADR-021 |
 | ADR-023 | Authored direct pricing — restrictions and cancellation | Accepted | Phase B authored shape: restrictions and cancellation policies for authored offers; gating in search. | ADR-022 |
 

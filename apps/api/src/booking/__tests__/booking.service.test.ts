@@ -14,6 +14,11 @@ import type {
 } from '../booking.repository';
 import type { BookingFxLockResolver } from '../../fx/booking-fx-lock.resolver';
 import type { BookingFxLockRepository } from '../../fx/booking-fx-lock.repository';
+import type {
+  BookingSnapshotRepository,
+  SourceOfferSnapshotRow,
+} from '../booking-snapshot.repository';
+import type { AuditService } from '../../audit/audit.service';
 
 /**
  * Pure unit tests for BookingService.confirm. The pg pool/client, the
@@ -86,6 +91,94 @@ function makeLockRepoMock(): LockRepoMock {
   };
 }
 
+function makeSourceOfferRow(): SourceOfferSnapshotRow {
+  return {
+    id: '01ARZ3NDEKTSV4RRFFQ69G5SRC',
+    tenant_id: TENANT_ID,
+    supplier_id: '01ARZ3NDEKTSV4RRFFQ69G5SUP',
+    canonical_hotel_id: '01ARZ3NDEKTSV4RRFFQ69G5HOT',
+    supplier_hotel_code: 'HB-1',
+    supplier_rate_key: 'rate-key-1',
+    check_in: '2026-07-01',
+    check_out: '2026-07-03',
+    occupancy_adults: 2,
+    occupancy_children_ages_jsonb: [],
+    supplier_room_code: 'DBL',
+    canonical_room_type_id: null,
+    supplier_rate_code: 'BAR',
+    canonical_rate_plan_id: null,
+    supplier_meal_code: 'BB',
+    canonical_meal_plan_id: null,
+    total_amount_minor_units: '10000',
+    total_currency: 'USD',
+    rate_breakdown_granularity: 'TOTAL_ONLY',
+    raw_payload_hash: 'a'.repeat(64),
+    raw_payload_storage_ref: 's3://raw/1',
+    received_at: '2026-05-19T10:00:00.000Z',
+    valid_until: '2026-05-19T11:00:00.000Z',
+  };
+}
+
+interface SnapshotRepoMock {
+  snapshotRepository: BookingSnapshotRepository;
+  loadSourceOfferSnapshot: ReturnType<typeof vi.fn>;
+  insertBookingSourcedOfferSnapshot: ReturnType<typeof vi.fn>;
+  loadSourceComponents: ReturnType<typeof vi.fn>;
+  insertBookingPriceComponentSnapshots: ReturnType<typeof vi.fn>;
+  insertBookingTaxFeeSnapshots: ReturnType<typeof vi.fn>;
+  loadSourceCancellationPolicy: ReturnType<typeof vi.fn>;
+  insertBookingCancellationPolicySnapshot: ReturnType<typeof vi.fn>;
+  snapshotExistsForBooking: ReturnType<typeof vi.fn>;
+}
+
+function makeSnapshotRepoMock(): SnapshotRepoMock {
+  const loadSourceOfferSnapshot = vi.fn(async () => makeSourceOfferRow());
+  const insertBookingSourcedOfferSnapshot = vi.fn(
+    async () => '01ARZ3NDEKTSV4RRFFQ69G5BOS',
+  );
+  const loadSourceComponents = vi.fn(async () => []);
+  const insertBookingPriceComponentSnapshots = vi.fn(async () => 0);
+  const insertBookingTaxFeeSnapshots = vi.fn(async () => 0);
+  const loadSourceCancellationPolicy = vi.fn(async () => undefined);
+  const insertBookingCancellationPolicySnapshot = vi.fn(
+    async () => '01ARZ3NDEKTSV4RRFFQ69G5CXL',
+  );
+  const snapshotExistsForBooking = vi.fn(async () => false);
+  return {
+    snapshotRepository: {
+      loadSourceOfferSnapshot,
+      insertBookingSourcedOfferSnapshot,
+      loadSourceComponents,
+      insertBookingPriceComponentSnapshots,
+      insertBookingTaxFeeSnapshots,
+      loadSourceCancellationPolicy,
+      insertBookingCancellationPolicySnapshot,
+      snapshotExistsForBooking,
+    } as unknown as BookingSnapshotRepository,
+    loadSourceOfferSnapshot,
+    insertBookingSourcedOfferSnapshot,
+    loadSourceComponents,
+    insertBookingPriceComponentSnapshots,
+    insertBookingTaxFeeSnapshots,
+    loadSourceCancellationPolicy,
+    insertBookingCancellationPolicySnapshot,
+    snapshotExistsForBooking,
+  };
+}
+
+interface AuditMock {
+  auditService: AuditService;
+  emitInTransaction: ReturnType<typeof vi.fn>;
+}
+
+function makeAuditMock(): AuditMock {
+  const emitInTransaction = vi.fn(async () => undefined);
+  return {
+    auditService: { emitInTransaction } as unknown as AuditService,
+    emitInTransaction,
+  };
+}
+
 function bookingRecord(
   status: BookingStatus,
   overrides?: Partial<BookingRecord>,
@@ -96,6 +189,11 @@ function bookingRecord(
     status,
     sellAmountMinorUnits: 10000n,
     sellCurrency: 'USD',
+    accountId: '01ARZ3NDEKTSV4RRFFQ69G5ACC',
+    reference: 'BB-2026-00099',
+    sourceOfferSnapshotId: '01ARZ3NDEKTSV4RRFFQ69G5SRC',
+    supplierRef: 'HOTELBEDS',
+    supplierRawRef: 'raw-ref-x',
     ...overrides,
   };
 }
@@ -105,6 +203,8 @@ describe('BookingService.confirm', () => {
   let repo: RepoMock;
   let resolver: ResolverMock;
   let lockRepo: LockRepoMock;
+  let snap: SnapshotRepoMock;
+  let audit: AuditMock;
   let service: BookingService;
 
   beforeEach(() => {
@@ -112,11 +212,15 @@ describe('BookingService.confirm', () => {
     repo = makeRepoMock();
     resolver = makeResolverMock();
     lockRepo = makeLockRepoMock();
+    snap = makeSnapshotRepoMock();
+    audit = makeAuditMock();
     service = new BookingService(
       pool.pool,
       repo.repository,
       resolver.resolver,
       lockRepo.lockRepository,
+      snap.snapshotRepository,
+      audit.auditService,
     );
   });
 
@@ -423,6 +527,8 @@ describe('BookingService.confirm — structured logging', () => {
   let repo: RepoMock;
   let resolver: ResolverMock;
   let lockRepo: LockRepoMock;
+  let snap: SnapshotRepoMock;
+  let audit: AuditMock;
   let service: BookingService;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -433,11 +539,15 @@ describe('BookingService.confirm — structured logging', () => {
     repo = makeRepoMock();
     resolver = makeResolverMock();
     lockRepo = makeLockRepoMock();
+    snap = makeSnapshotRepoMock();
+    audit = makeAuditMock();
     service = new BookingService(
       pool.pool,
       repo.repository,
       resolver.resolver,
       lockRepo.lockRepository,
+      snap.snapshotRepository,
+      audit.auditService,
     );
     logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
@@ -628,5 +738,190 @@ describe('BookingService.confirm — structured logging', () => {
       warnSpy.mock.calls.length +
       errorSpy.mock.calls.length;
     expect(totalCalls).toBe(1);
+  });
+});
+
+// ─── Booking Truth Slice 2 — ADR-021 snapshot pinning + audit ────────────────
+
+describe('BookingService.confirm — booking-time snapshot pinning', () => {
+  let pool: PoolMock;
+  let repo: RepoMock;
+  let resolver: ResolverMock;
+  let lockRepo: LockRepoMock;
+  let snap: SnapshotRepoMock;
+  let audit: AuditMock;
+  let service: BookingService;
+
+  beforeEach(() => {
+    pool = makePoolMock();
+    repo = makeRepoMock();
+    resolver = makeResolverMock();
+    lockRepo = makeLockRepoMock();
+    snap = makeSnapshotRepoMock();
+    audit = makeAuditMock();
+    service = new BookingService(
+      pool.pool,
+      repo.repository,
+      resolver.resolver,
+      lockRepo.lockRepository,
+      snap.snapshotRepository,
+      audit.auditService,
+    );
+  });
+
+  it('pins offer/component/tax snapshots and emits BOOKING_CONFIRMED in the tx, before COMMIT', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+
+    const result = await service.confirm({
+      bookingId: BOOKING_ID,
+      chargeCurrency: 'USD',
+    });
+
+    expect(result.alreadyConfirmed).toBe(false);
+    expect(snap.loadSourceOfferSnapshot).toHaveBeenCalledWith(
+      pool.client,
+      TENANT_ID,
+      '01ARZ3NDEKTSV4RRFFQ69G5SRC',
+    );
+    expect(snap.insertBookingSourcedOfferSnapshot).toHaveBeenCalledTimes(1);
+    expect(snap.insertBookingPriceComponentSnapshots).toHaveBeenCalledTimes(1);
+    expect(snap.insertBookingTaxFeeSnapshots).toHaveBeenCalledTimes(1);
+    expect(audit.emitInTransaction).toHaveBeenCalledTimes(1);
+
+    const [client, event] = audit.emitInTransaction.mock.calls[0]!;
+    expect(client).toBe(pool.client);
+    expect(event).toMatchObject({
+      category: 'APP',
+      kind: 'BOOKING_CONFIRMED',
+      tenantId: TENANT_ID,
+      targetId: BOOKING_ID,
+      payload: {
+        bookingId: BOOKING_ID,
+        tenantId: TENANT_ID,
+        accountId: '01ARZ3NDEKTSV4RRFFQ69G5ACC',
+        bookingReference: 'BB-2026-00099',
+        sourceOfferSnapshotId: '01ARZ3NDEKTSV4RRFFQ69G5SRC',
+        supplier: 'HOTELBEDS',
+        supplierRawRef: 'raw-ref-x',
+        sellAmountMinorUnits: '10000',
+        sellCurrency: 'USD',
+        fxLockId: null,
+        status: 'CONFIRMED',
+      },
+    });
+    expect(pool.clientQuery).toHaveBeenLastCalledWith('COMMIT');
+  });
+
+  it('writes the cancellation-policy snapshot only when the source has one', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    snap.loadSourceCancellationPolicy.mockResolvedValue({
+      id: '01ARZ3NDEKTSV4RRFFQ69G5POL',
+      windows_jsonb: [],
+      refundable: true,
+      source_verbatim_text: 'free',
+      parsed_with: 'p@1',
+    });
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' });
+    expect(
+      snap.insertBookingCancellationPolicySnapshot,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the fx-lock id into the BOOKING_CONFIRMED payload', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    resolver.resolve.mockResolvedValue({
+      kind: 'SNAPSHOT_REFERENCE',
+      provider: 'OXR',
+      sourceCurrency: 'USD',
+      chargeCurrency: 'EUR',
+      sourceMinor: 10000n,
+      chargeMinor: 9200n,
+      rate: '0.92000000',
+      rateSnapshotId: 'snap-oxr-1',
+    });
+
+    await service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'EUR' });
+    const [, event] = audit.emitInTransaction.mock.calls[0]!;
+    const payload = (event as { payload: { fxLockId: string | null } })
+      .payload;
+    expect(typeof payload.fxLockId).toBe('string');
+    expect(payload.fxLockId).not.toBeNull();
+  });
+
+  it('rejects confirm pre-tx when source_offer_snapshot_id is null', async () => {
+    repo.loadById.mockResolvedValue(
+      bookingRecord('INITIATED', { sourceOfferSnapshotId: null }),
+    );
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toThrow(/source_offer_snapshot_id is not set/);
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(audit.emitInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls back (no COMMIT) when the source offer snapshot is gone', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    snap.loadSourceOfferSnapshot.mockResolvedValue(undefined);
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toThrow(/source offer.*not found/);
+    const commits = pool.clientQuery.mock.calls.filter(
+      (c) => c[0] === 'COMMIT',
+    );
+    expect(commits.length).toBe(0);
+    expect(pool.clientQuery).toHaveBeenCalledWith('ROLLBACK');
+    expect(audit.emitInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls back when a snapshot insert fails — booking never COMMITs', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    snap.insertBookingSourcedOfferSnapshot.mockRejectedValue(
+      new Error('snapshot insert failed'),
+    );
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toThrow(/snapshot insert failed/);
+    const commits = pool.clientQuery.mock.calls.filter(
+      (c) => c[0] === 'COMMIT',
+    );
+    expect(commits.length).toBe(0);
+    expect(pool.clientQuery).toHaveBeenCalledWith('ROLLBACK');
+    expect(audit.emitInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls back when the BOOKING_CONFIRMED audit emit fails', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('INITIATED'));
+    repo.markConfirmed.mockResolvedValue({ updated: true });
+    audit.emitInTransaction.mockRejectedValue(new Error('audit failed'));
+
+    await expect(
+      service.confirm({ bookingId: BOOKING_ID, chargeCurrency: 'USD' }),
+    ).rejects.toThrow(/audit failed/);
+    const commits = pool.clientQuery.mock.calls.filter(
+      (c) => c[0] === 'COMMIT',
+    );
+    expect(commits.length).toBe(0);
+    expect(pool.clientQuery).toHaveBeenCalledWith('ROLLBACK');
+  });
+
+  it('idempotent replay (already CONFIRMED) pins nothing and emits no audit', async () => {
+    repo.loadById.mockResolvedValue(bookingRecord('CONFIRMED'));
+
+    const result = await service.confirm({
+      bookingId: BOOKING_ID,
+      chargeCurrency: 'USD',
+    });
+    expect(result).toEqual({ bookingId: BOOKING_ID, alreadyConfirmed: true });
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(snap.insertBookingSourcedOfferSnapshot).not.toHaveBeenCalled();
+    expect(audit.emitInTransaction).not.toHaveBeenCalled();
   });
 });
