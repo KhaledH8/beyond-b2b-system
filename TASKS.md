@@ -10,6 +10,43 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **Booking Intake — Slice 1 (2026-05-19).** Smallest safe
+      booking-truth slice. Closes the "confirm endpoint is dead code"
+      gap: nothing previously created a `booking_booking` row.
+      - Additive migration `20260515000001_booking_intake_columns.ts`:
+        `source_offer_snapshot_id`, `idempotency_key`, `supplier_ref`,
+        `supplier_raw_ref` (all NULLable). Partial-unique index
+        `booking_booking_idem_uq (tenant_id, idempotency_key)`;
+        partial index `booking_booking_source_offer_idx`. No
+        destructive change; existing CONFIRMED behaviour untouched;
+        `down()` reverses cleanly.
+      - `POST /internal/bookings` (`InternalAuthGuard`) →
+        `BookingIntakeService.create`. Validates shape, refuses
+        missing pricing (400) and `PROVISIONAL`/not-bookable rates
+        (422, ADR-020), validates money-movement enums against the
+        shell CHECKs, generates a `BB-YYYY-NNNNN` tenant-scoped
+        reference with collision retry, inserts `INITIATED`, and
+        writes `BOOKING_CREATED` (`APP`) via
+        `AuditService.emitInTransaction` in the **same transaction**
+        (audit failure rolls the booking back).
+      - Idempotent on `(tenantId, idempotencyKey)`: fast-path replay
+        + idem-race rollback/re-read; replay emits no second audit.
+      - `audit-event.types.ts`: new `BOOKING_CREATED` kind +
+        `BookingCreatedPayload` (target-kind routing already maps
+        `BOOKING_*` → `BOOKING`).
+      - Tests: `booking-intake.service.test.ts` (unit, mocked: happy
+        path, validation, bookability gate, audit-rollback,
+        idempotency replay/race/ref-retry), `booking-reference.test.ts`,
+        `booking-intake.repository.test.ts` (real DB),
+        `booking-intake.controller.test.ts` (real DB, incl.
+        create→confirm proving confirm is no longer dead code).
+        Existing booking confirm/repository/controller + audit suites
+        still green.
+      - **Not** in this slice: supplier `book()`, payment, ledger,
+        documents, cancellation/refund, full ADR-010 saga, UI, Auth0.
+        **Next booking-truth slice:** ADR-021 booking-time snapshot
+        pinning at `CONFIRMED`.
+
 - [x] **ADR-028 V1.0 step 7 — audit read API LIST (2026-05-13).**
       Backend-only slice. New permission `AUDIT_READ_SENSITIVE`
       added to the catalogue (PERMISSIONS const + PERMISSION_KIND as

@@ -28,7 +28,7 @@ Status legend:
 | ADR-007 | Tech stack (provisional) | Accepted | NestJS, Postgres+PostGIS, Redis, MinIO, pnpm + Turbo, Next.js 15. | ADR-001 |
 | ADR-008 | Hotel mapping strategy | Accepted (extended by ADR-021) | Deterministic-first mapping; reversible; auditable; conflict resolution human-in-the-loop. | ADR-002 |
 | ADR-009 | Merchandising and ranking | Accepted | Sponsored / recommended / featured tags; never mutates priced rate. | ADR-004 |
-| ADR-010 | Booking orchestration | Accepted (amended by ADR-016, ADR-020, ADR-021) | Booking saga; document workers outside saga; single-hotel cart only in MVP. | ADR-003, ADR-004, ADR-006 |
+| ADR-010 | Booking orchestration | Accepted (amended by ADR-016, ADR-020, ADR-021; 2026-05-19 Booking Intake Slice 1) | Booking saga; document workers outside saga; single-hotel cart only in MVP. Intake creates `INITIATED` (shell status set), audit in-transaction, full saga deferred. | ADR-003, ADR-004, ADR-006 |
 | ADR-011 | Monorepo structure | Accepted (amended by ADR-016, ADR-017, ADR-021) | Workspace layout; package boundaries; table-prefix ownership; ESLint dependency-direction. | ADR-007 |
 
 ## Wallet, Direct Connectivity, Rewards, Intelligence (ADR-012 → ADR-015)

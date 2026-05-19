@@ -145,7 +145,8 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 | Capability | Status | Description | Lives in | ADR |
 |---|---|---|---|---|
 | Booking shell table | implemented | `booking_booking` baseline; ADR-020 triple immutable at confirmation. | `infra/migrations/booking/` | ADR-010, ADR-020 |
-| Internal booking-confirm endpoint | implemented | First step of the saga: confirms a held rate; emits FX lock derivation; attaches money-movement triple. | `apps/api/src/booking/` | ADR-010, ADR-020 |
+| Booking intake (`POST /internal/bookings`) | implemented | Slice 1: creates `INITIATED` booking from a priced sourced offer; `BB-YYYY-NNNNN` reference; refuses missing pricing / `PROVISIONAL` rates; `BOOKING_CREATED` audit in the insert transaction; idempotent on `(tenant, idempotencyKey)`. No supplier `book()`, payment, ledger, documents, or cancellation. | `apps/api/src/booking/booking-intake.service.ts` | ADR-010 (2026-05-19 amendment), ADR-020, ADR-028 |
+| Internal booking-confirm endpoint | implemented | First step of the saga: confirms a held rate; emits FX lock derivation; attaches money-movement triple. Reachable from real data via booking intake. | `apps/api/src/booking/` | ADR-010, ADR-020 |
 | Booking confirmation observability | implemented | Trace + structured logging on confirm path. | `apps/api/src/booking/` | — |
 | Booking confirmation FX lookup | implemented | Reads applied FX lock at confirmation time. | `apps/api/src/booking/`, `apps/api/src/fx/` | ADR-024 |
 | Full booking saga (`SUPPLIER_BOOKED`, `PAYMENT_CAPTURED`, `DOCUMENT_ISSUED`) | planned | Phase 2 saga shape. `VCC_ISSUED` step locked for VCC_TO_PROPERTY mode. | — | ADR-010, ADR-020 |

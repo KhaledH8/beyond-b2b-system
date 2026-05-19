@@ -313,3 +313,49 @@ See ADR-020 §Document impact.
 - **Firing `CONFIRMED` on an `UPSTREAM_PLATFORM_COLLECT` booking
   without the upstream webhook handshake.** We have not confirmed
   guest payment.
+
+## Amendment 2026-05-19 (Booking Intake — Slice 1)
+
+### Intake creates `INITIATED`, not the full ADR-010 saga state set
+
+The canonical saga state machine in this ADR
+(`DRAFT → PRICING_CONFIRMED → RATE_QUOTED → …`) is the **target**
+shape. It is **not** yet implemented. The implemented
+`booking_booking` shell persists a deliberately smaller status set
+(`INITIATED, PENDING_PAYMENT, CONFIRMED, CANCELLED, FAILED,
+REFUNDED`). Booking Intake (Slice 1) creates a row in `INITIATED` —
+the shell's entry state — directly from a selected priced **sourced**
+offer. This is an intentional, documented divergence: the durable
+saga, `RATE_QUOTED`/`PAYMENT_AUTHORIZED`/`SUPPLIER_BOOKED` steps, and
+the compensating actions are deferred to later slices. No supplier
+`book()`, payment, ledger, or document work happens at intake.
+
+### Audit at intake
+
+A `BOOKING_CREATED` (`APP`) audit event is written via
+`AuditService.emitInTransaction` in the **same transaction** as the
+`booking_booking` insert. An un-audited booking is never committed —
+this is stricter than the ADR-028 default for `APP` (which permits
+best-effort background emission) and is a deliberate booking-truth
+choice.
+
+### Soft offer link, not the ADR-021 booking-time snapshot
+
+`booking_booking.source_offer_snapshot_id` (added in the intake
+migration, NULLable, no FK) is an intake/reconciliation convenience
+only. It is **not** the ADR-021 immutable booking-time snapshot.
+ADR-021 snapshot pinning at `CONFIRMED` (sourced/authored +
+cancellation-policy + tax/fee, in the confirmation transaction)
+remains the next booking-truth slice and is unaffected by this link.
+
+### Anti-patterns (intake)
+
+- **Treating `source_offer_snapshot_id` as the booking-time
+  snapshot.** It is a soft link; the offer snapshot has a
+  search-session lifecycle and may be pruned. Historical booking
+  truth must come from the ADR-021 snapshots, not this column.
+- **Calling a supplier `book()` from intake.** Intake never moves
+  money or holds supplier inventory.
+- **Skipping the `PROVISIONAL` bookability gate.** A rate whose
+  money-movement triple is unresolved must never become a booking
+  (ADR-020).

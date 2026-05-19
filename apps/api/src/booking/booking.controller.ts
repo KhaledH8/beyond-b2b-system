@@ -13,6 +13,10 @@ import {
   BookingService,
   type ConfirmBookingResult,
 } from './booking.service';
+import {
+  BookingIntakeService,
+  type BookingIntakeView,
+} from './booking-intake.service';
 
 /**
  * Internal booking-confirm endpoint (ADR-024 C5c.3).
@@ -35,17 +39,34 @@ import {
  * re-confirms also return 201; the response body's `alreadyConfirmed`
  * flag distinguishes new vs replayed.
  *
+ * `POST /internal/bookings`  (Booking Intake — Slice 1)
+ *   Body:    booking intake request (see BookingIntakeService)
+ *   201:     { booking: BookingIntakeView, replayed: boolean }
+ *   400:     malformed body / missing pricing / bad enums
+ *   401:     missing/wrong X-Internal-Key
+ *   422:     PROVISIONAL / not-bookable rate refused (ADR-020)
+ *
  * Out of scope for this slice (deferred to C5c.4 / C5d):
  *   - public-facing booking endpoints
+ *   - supplier book(), payment execution, ledger, documents
  *   - refund / cancellation routes
- *   - payment execution
  */
 @UseGuards(InternalAuthGuard)
 @Controller('internal/bookings')
 export class BookingController {
   constructor(
     @Inject(BookingService) private readonly service: BookingService,
+    @Inject(BookingIntakeService)
+    private readonly intakeService: BookingIntakeService,
   ) {}
+
+  @Post()
+  @HttpCode(201)
+  async createIntake(
+    @Body() body: unknown,
+  ): Promise<{ booking: BookingIntakeView; replayed: boolean }> {
+    return this.intakeService.create(body);
+  }
 
   @Post(':id/confirm')
   @HttpCode(201)

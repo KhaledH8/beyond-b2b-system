@@ -29,6 +29,18 @@ export const AUDIT_SCHEMA_VERSION = 1 as const;
 // ── Payload types ─────────────────────────────────────────────────────
 
 // APP
+export interface BookingCreatedPayload {
+  readonly bookingId: string;
+  readonly tenantId: string;
+  readonly accountId: string;
+  readonly bookingReference: string;
+  readonly sourceOfferSnapshotId: string | null;
+  readonly supplier: string;
+  readonly supplierRawRef: string;
+  readonly sellAmountMinorUnits: string;
+  readonly sellCurrency: string;
+  readonly status: 'INITIATED';
+}
 export interface BookingConfirmedPayload {
   readonly bookingId: string;
   readonly supplierId: string;
@@ -136,6 +148,7 @@ export interface AuditPartitionDroppedPayload {
 
 export type AuditEventInput =
   // ── APP — background emission permissible ─────────────────────────
+  | { category: 'APP'; kind: 'BOOKING_CREATED';     tenantId: string; targetId: string; payload: BookingCreatedPayload }
   | { category: 'APP'; kind: 'BOOKING_CONFIRMED';   tenantId: string; targetId: string; payload: BookingConfirmedPayload }
   | { category: 'APP'; kind: 'BOOKING_CANCELLED';   tenantId: string; targetId: string; payload: BookingCancelledPayload }
   | { category: 'APP'; kind: 'LEDGER_ENTRY_POSTED'; tenantId: string; targetId: string; payload: LedgerEntryPostedPayload }

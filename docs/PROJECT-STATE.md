@@ -4,10 +4,10 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-10 (ADR-029 step 6 — layout v0; step 5
-  design-system v0; step 4 operator-class layout gate; steps 1–3
-  env/Auth0/API-client; ADR-029 accepted; ADR-027 V1.0 e2e flow
-  verification + TTL/tenant hardening)
+- **Last updated:** 2026-05-19 (Booking Intake Slice 1 —
+  `POST /internal/bookings`, additive intake migration,
+  `BOOKING_CREATED` audit in-transaction; ADR-028 audit read LIST;
+  ADR-029 step 6 layout v0; ADR-027 V1.0 e2e + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
 - **Current branch:** `main` — all work shipped to `origin/main`.
@@ -196,6 +196,26 @@ rule in `CLAUDE.md` §11.
 
 ### Booking
 - `booking_booking` shell migration.
+- Booking intake (Slice 1, 2026-05-19): additive migration adding
+  `source_offer_snapshot_id`, `idempotency_key`, `supplier_ref`,
+  `supplier_raw_ref` (all NULLable; partial-unique idempotency index;
+  source-offer lookup index). `POST /internal/bookings`
+  (`InternalAuthGuard`) creates an `INITIATED` booking from a selected
+  priced sourced offer, generates a `BB-YYYY-NNNNN` tenant-scoped
+  reference, refuses missing pricing and `PROVISIONAL`/not-bookable
+  rates (ADR-020), and writes a durable `BOOKING_CREATED` audit event
+  in the **same transaction** as the insert (rollback if audit fails).
+  Idempotent on `(tenantId, idempotencyKey)`: replay returns the same
+  booking and emits no second audit event. The pre-existing
+  `POST /internal/bookings/:id/confirm` is now reachable from real
+  data (proven by a create→confirm integration test).
+  - Supplier `book()`, payment, ledger, documents, and
+    cancellation/refund are **not** implemented in this slice.
+  - ADR-021 booking-time snapshot pinning at `CONFIRMED`
+    (immutable sourced/authored + cancellation-policy + tax/fee
+    snapshots) remains the **next** booking-truth slice;
+    `source_offer_snapshot_id` here is a soft intake/reconciliation
+    link, not the immutable booking-time snapshot.
 - Internal booking-confirm endpoint as the first saga step; FX lock
   applied inside the confirmation transaction.
 
@@ -524,8 +544,17 @@ formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 ## Immediate next slice
 
-Three candidate slices, picked by priority call:
+Candidate slices, picked by priority call:
 
+- **ADR-021 booking-time snapshot pinning at `CONFIRMED`** — backend
+  track, next booking-truth slice. Add immutable
+  `booking_sourced_offer_snapshot` / `booking_authored_rate_snapshot`
+  / `booking_cancellation_policy_snapshot` / `booking_tax_fee_snapshot`
+  and pin exactly one offer-shape snapshot + cancellation policy +
+  tax/fee in the existing `CONFIRMED` transaction, plus a
+  `BOOKING_CONFIRMED` audit emit. Booking Intake (Slice 1) is shipped;
+  bookings now exist in `INITIATED` but carry no immutable record of
+  what was sold — this is the highest-remaining booking-truth gap.
 - **ADR-027 impersonation UI** — frontend track. First feature slice
   on top of the ADR-029 foundation (complete). Persistent
   `<Banner variant="danger">` in the `<SystemBanner />` slot on
