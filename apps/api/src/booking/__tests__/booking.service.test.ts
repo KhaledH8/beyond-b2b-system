@@ -194,6 +194,11 @@ function bookingRecord(
     sourceOfferSnapshotId: '01ARZ3NDEKTSV4RRFFQ69G5SRC',
     supplierRef: 'HOTELBEDS',
     supplierRawRef: 'raw-ref-x',
+    supplierId: null,
+    supplierConfirmationRef: null,
+    supplierBookedAt: null,
+    supplierBookingStatus: null,
+    supplierBookingMode: null,
     ...overrides,
   };
 }

@@ -128,8 +128,34 @@ export class HotelbedsAdapter implements SupplierAdapter {
     return rates;
   }
 
-  book(_ctx: TenantContext, _req: BookRequest): Promise<BookConfirmation> {
-    return Promise.reject(new HotelbedsNotImplementedError('book'));
+  /**
+   * Delegates to the injected client (mirrors `fetchRates`). Only the
+   * fixture client implements `book`; stub and live reject with
+   * `HotelbedsNotImplementedError`, so a live supplier booking is
+   * impossible until the dedicated live-booking slice. The contract
+   * `BookRequest` is projected to the Hotelbeds-shaped client request.
+   */
+  async book(
+    _ctx: TenantContext,
+    req: BookRequest,
+  ): Promise<BookConfirmation> {
+    const res = await this.deps.client.book({
+      supplierHotelCode: req.supplierHotelId,
+      supplierRateKey: req.supplierRateId,
+      supplierRawRef: req.supplierRawRef,
+      checkIn: req.checkIn,
+      checkOut: req.checkOut,
+      occupancyAdults: req.occupancy.adults,
+      guestFirstName: req.guestFirstName,
+      guestLastName: req.guestLastName,
+      guestEmail: req.guestEmail,
+      idempotencyKey: req.idempotencyKey,
+    });
+    return {
+      supplierBookingRef: res.supplierBookingRef,
+      status: res.status,
+      confirmedAt: new Date(res.confirmedAt),
+    };
   }
 
   cancel(_ctx: TenantContext, _req: CancelRequest): Promise<CancelConfirmation> {

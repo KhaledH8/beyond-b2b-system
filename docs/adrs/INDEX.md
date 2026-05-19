@@ -21,14 +21,14 @@ Status legend:
 |---|---|---|---|---|
 | ADR-001 | Foundation | Accepted | Project mission, scope, principles. | — |
 | ADR-002 | Canonical hotel data model | Accepted (amended by ADR-021) | Single canonical hotel; supplier references; static/dynamic separation. | ADR-001 |
-| ADR-003 | Supplier adapter contract | Accepted (amended by ADR-013, ADR-020, ADR-021) | One interface for every supplier (aggregator + direct paper + CRS + channel manager). | ADR-001, ADR-002 |
+| ADR-003 | Supplier adapter contract | Accepted (amended by ADR-013, ADR-020, ADR-021; 2026-05-19 fixture `book()`) | One interface for every supplier (aggregator + direct paper + CRS + channel manager). Fixture-only `book()` implemented; live `book()`/`cancel()` deferred. | ADR-001, ADR-002 |
 | ADR-004 | Pricing rule model and precedence | Accepted (amended by ADR-014, ADR-015, ADR-020) | Pricing precedence chain; account-aware markup; pricing trace. | ADR-001, ADR-003 |
 | ADR-005 | Static vs dynamic content split | Accepted | What may be cached vs fetched live. | ADR-002 |
 | ADR-006 | Tenancy and account model | Accepted (amended by ADR-016, ADR-017) | Multi-tenant data model; account types; LegalEntity. | ADR-001 |
 | ADR-007 | Tech stack (provisional) | Accepted | NestJS, Postgres+PostGIS, Redis, MinIO, pnpm + Turbo, Next.js 15. | ADR-001 |
 | ADR-008 | Hotel mapping strategy | Accepted (extended by ADR-021) | Deterministic-first mapping; reversible; auditable; conflict resolution human-in-the-loop. | ADR-002 |
 | ADR-009 | Merchandising and ranking | Accepted | Sponsored / recommended / featured tags; never mutates priced rate. | ADR-004 |
-| ADR-010 | Booking orchestration | Accepted (amended by ADR-016, ADR-020, ADR-021; 2026-05-19 Booking Intake Slice 1 + Booking Truth Slice 2) | Booking saga; document workers outside saga; single-hotel cart only in MVP. Intake creates `INITIATED`; confirm pins ADR-021 booking-time snapshots + `BOOKING_CONFIRMED` in-transaction; full saga deferred. | ADR-003, ADR-004, ADR-006 |
+| ADR-010 | Booking orchestration | Accepted (amended by ADR-016, ADR-020, ADR-021; 2026-05-19 Booking Intake Slice 1 + Truth Slice 2 + Slice 3 fixture supplier-book) | Booking saga; document workers outside saga; single-hotel cart only in MVP. Intake creates `INITIATED`; confirm pins ADR-021 snapshots + `BOOKING_CONFIRMED`; fixture-only supplier-book step (`BOOKING_SUPPLIER_BOOKED`, no status change); full saga deferred. | ADR-003, ADR-004, ADR-006 |
 | ADR-011 | Monorepo structure | Accepted (amended by ADR-016, ADR-017, ADR-021) | Workspace layout; package boundaries; table-prefix ownership; ESLint dependency-direction. | ADR-007 |
 
 ## Wallet, Direct Connectivity, Rewards, Intelligence (ADR-012 → ADR-015)

@@ -12,7 +12,7 @@ import type {
   HotelbedsHotelsResponse,
   HotelbedsRawResponse,
 } from './client';
-import { HotelbedsAdapterError } from './errors';
+import { HotelbedsAdapterError, HotelbedsNotImplementedError } from './errors';
 
 /**
  * Phase 2 live HTTP client for the Hotelbeds Booking + Content APIs.
@@ -134,6 +134,14 @@ export function createLiveHotelbedsClient(
 
       await maybeCapture(config, 'availability', body);
       return { parsed, rawBytes: body, contentType };
+    },
+
+    // Live supplier booking is a later, deliberate slice (Hotelbeds
+    // booking-API certification + commercial sign-off). Until then the
+    // live client refuses to book — fixture mode is the only path that
+    // produces a supplier confirmation reference.
+    book() {
+      return Promise.reject(new HotelbedsNotImplementedError('book'));
     },
   };
 }

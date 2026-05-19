@@ -403,3 +403,52 @@ pinning was "the next slice."
   raises; corrections flow through ADR-016 credit/debit notes.
 - **Confirming a booking with no live source snapshot.** Refused
   (409) and rolled back — never confirm with un-pinnable truth.
+
+## Amendment 2026-05-19 (Booking Truth — Slice 3: supplier booking, fixture mode)
+
+### Supplier-book is an independent, data-only step (not in confirm)
+
+A new `POST /internal/bookings/:id/supplier-book` performs a
+fixture-only supplier reservation and records it on `booking_booking`
+(`supplier_id`, `supplier_confirmation_ref`, `supplier_booked_at`,
+`supplier_booking_status`, `supplier_booking_mode`). It is **not**
+folded into the confirm transaction and does **not** change
+`booking_booking.status`. Rationale: `adapter.book()` is outbound IO
+(HTTP under live) and must never sit inside a DB transaction; ADR-010
+models supplier booking as its own idempotent step with its own
+compensation. The contract `adapter.book()` runs **before** a short
+DB transaction that writes the columns and emits `BOOKING_SUPPLIER_
+BOOKED` via `emitInTransaction` (audit failure rolls the write back).
+
+### Deliberate deferrals (documented divergence, consistent with Slices 1–2)
+
+- **No `SUPPLIER_BOOKED` status / saga sequencing.** The shell status
+  set is unchanged; supplier-book neither gates nor reorders confirm.
+  True ADR-010 ordering (`SUPPLIER_BOOKED` before `CONFIRMED`, with
+  compensation) is a later, dedicated saga slice.
+- **Fixture-only.** Only the Hotelbeds fixture client implements
+  `book()` (deterministic `HB-FIX-<sha256-12>` ref). Stub and live
+  clients reject `book()` with `NOT_IMPLEMENTED`; the step surfaces
+  that as HTTP 501. Live supplier booking is impossible until its own
+  certification slice.
+- **No `cancel()` / compensation.** `cancel()` still throws
+  `NOT_IMPLEMENTED`; cancellation-refund compensation is out of scope.
+- **No payment, ledger, documents.**
+
+### Idempotency
+
+`supplier_confirmation_ref IS NOT NULL` is the idempotency lever:
+a replayed supplier-book returns the existing details with
+`replayed: true`, performs no adapter call, and emits no second
+audit. The `recordSupplierBooking` UPDATE additionally guards
+`supplier_confirmation_ref IS NULL` + non-terminal status so a
+concurrent winner cannot be overwritten.
+
+### Anti-patterns (supplier-book)
+
+- **Calling `adapter.book()` inside a DB transaction.** It is
+  outbound IO; keep it before `BEGIN`.
+- **Treating supplier-book as a status transition.** It is data;
+  status sequencing belongs to the saga slice.
+- **Allowing a live/stub adapter to "succeed".** Only fixture mode
+  may produce a ref this slice; everything else is 501.

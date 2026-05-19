@@ -62,8 +62,45 @@ export interface SourceCancellationPolicyRow {
   readonly parsed_with: string | null;
 }
 
+/**
+ * The subset of a pinned `booking_sourced_offer_snapshot` needed to
+ * build a supplier BookRequest (Slice 3). Mirrors the same fields the
+ * live `SourceOfferSnapshotRow` exposes so the supplier-book service
+ * can treat pinned and live sources uniformly.
+ */
+export interface BookingTimeSupplierIngredients {
+  readonly supplier_id: string;
+  readonly supplier_hotel_code: string;
+  readonly supplier_rate_key: string;
+  readonly check_in: string;
+  readonly check_out: string;
+  readonly occupancy_adults: number;
+}
+
 @Injectable()
 export class BookingSnapshotRepository {
+  /**
+   * Reads the pinned 1:1 booking-time offer snapshot for a booking.
+   * Returns `undefined` when the booking has not been confirmed yet
+   * (no pin) — the supplier-book service then falls back to the live
+   * `offer_sourced_snapshot` via `source_offer_snapshot_id`.
+   */
+  async loadBookingTimeOfferSnapshot(
+    q: Queryable,
+    bookingId: string,
+  ): Promise<BookingTimeSupplierIngredients | undefined> {
+    const { rows } = await q.query<BookingTimeSupplierIngredients>(
+      `SELECT supplier_id, supplier_hotel_code, supplier_rate_key,
+              to_char(check_in, 'YYYY-MM-DD')  AS check_in,
+              to_char(check_out, 'YYYY-MM-DD') AS check_out,
+              occupancy_adults
+         FROM booking_sourced_offer_snapshot
+        WHERE booking_id = $1`,
+      [bookingId],
+    );
+    return rows.length > 0 ? rows[0] : undefined;
+  }
+
   /**
    * Loads the live sourced offer snapshot, tenant-scoped. Returns
    * `undefined` when it does not exist (expired/pruned/wrong tenant) —

@@ -41,6 +41,16 @@ export interface BookingCreatedPayload {
   readonly sellCurrency: string;
   readonly status: 'INITIATED';
 }
+export interface BookingSupplierBookedPayload {
+  readonly bookingId: string;
+  readonly tenantId: string;
+  readonly accountId: string;
+  readonly bookingReference: string;
+  readonly supplierRef: string;
+  readonly supplierBookingRef: string;
+  readonly supplierStatus: 'CONFIRMED' | 'ON_REQUEST';
+  readonly mode: 'FIXTURE';
+}
 export interface BookingConfirmedPayload {
   readonly bookingId: string;
   /**
@@ -165,6 +175,7 @@ export interface AuditPartitionDroppedPayload {
 export type AuditEventInput =
   // ── APP — background emission permissible ─────────────────────────
   | { category: 'APP'; kind: 'BOOKING_CREATED';     tenantId: string; targetId: string; payload: BookingCreatedPayload }
+  | { category: 'APP'; kind: 'BOOKING_SUPPLIER_BOOKED'; tenantId: string; targetId: string; payload: BookingSupplierBookedPayload }
   | { category: 'APP'; kind: 'BOOKING_CONFIRMED';   tenantId: string; targetId: string; payload: BookingConfirmedPayload }
   | { category: 'APP'; kind: 'BOOKING_CANCELLED';   tenantId: string; targetId: string; payload: BookingCancelledPayload }
   | { category: 'APP'; kind: 'LEDGER_ENTRY_POSTED'; tenantId: string; targetId: string; payload: LedgerEntryPostedPayload }

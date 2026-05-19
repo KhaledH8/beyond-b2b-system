@@ -110,6 +110,35 @@ export interface HotelbedsAvailabilityRate {
   };
 }
 
+/**
+ * Booking request the adapter hands to the client. Distinct from the
+ * contract-level `BookRequest` (`@bb/supplier-contract`) — this is the
+ * Hotelbeds-shaped projection the client acts on. Only the fixture
+ * client implements `book`; stub and live reject with
+ * `HotelbedsNotImplementedError` (live booking is a later, deliberate
+ * slice with its own certification work).
+ */
+export interface HotelbedsBookRequest {
+  readonly supplierHotelCode: string;
+  readonly supplierRateKey: string;
+  readonly supplierRawRef: string;
+  readonly checkIn: string;
+  readonly checkOut: string;
+  readonly occupancyAdults: number;
+  readonly guestFirstName: string;
+  readonly guestLastName: string;
+  readonly guestEmail: string;
+  /** Caller-supplied; the fixture ref is a deterministic hash of it. */
+  readonly idempotencyKey: string;
+}
+
+export interface HotelbedsBookResponse {
+  readonly supplierBookingRef: string;
+  readonly status: 'CONFIRMED' | 'ON_REQUEST';
+  /** ISO-8601 UTC. */
+  readonly confirmedAt: string;
+}
+
 export interface HotelbedsClient {
   listHotels(
     req: HotelbedsHotelsRequest,
@@ -118,6 +147,8 @@ export interface HotelbedsClient {
   checkAvailability(
     req: HotelbedsAvailabilityRequest,
   ): Promise<HotelbedsRawResponse<HotelbedsAvailabilityResponse>>;
+
+  book(req: HotelbedsBookRequest): Promise<HotelbedsBookResponse>;
 }
 
 /**
@@ -133,6 +164,9 @@ export function createStubHotelbedsClient(_config: HotelbedsClientConfig): Hotel
     },
     checkAvailability() {
       return Promise.reject(new HotelbedsNotImplementedError('checkAvailability'));
+    },
+    book() {
+      return Promise.reject(new HotelbedsNotImplementedError('book'));
     },
   };
 }

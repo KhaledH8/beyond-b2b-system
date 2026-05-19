@@ -10,6 +10,48 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 
 ## Now (this session)
 
+- [x] **Booking Truth — Slice 3: supplier booking, fixture mode
+      (2026-05-19).**
+      - Additive migration
+        `20260519000002_booking_supplier_booking_columns.ts`: NULLable
+        `supplier_booked_at`, `supplier_booking_status`
+        (CHECK CONFIRMED|ON_REQUEST), `supplier_booking_mode`
+        (CHECK FIXTURE|LIVE) on `booking_booking`; reuses existing
+        `supplier_id` + `supplier_confirmation_ref`. `down()` reverses.
+      - Adapter: `HotelbedsClient` gains `book()`;
+        `HotelbedsAdapter.book()` delegates to the client (mirrors
+        `fetchRates`). Fixture client returns deterministic
+        `HB-FIX-<sha256-12>` CONFIRMED ref; stub + live clients
+        reject `book()` with `NOT_IMPLEMENTED`. `cancel()` unchanged.
+      - `POST /internal/bookings/:id/supplier-book`
+        (`InternalAuthGuard`) → `BookingSupplierService`: load booking
+        (404), replay if `supplier_confirmation_ref` set, refuse
+        terminal (422), resolve ingredients from pinned
+        `booking_sourced_offer_snapshot` else live
+        `offer_sourced_snapshot`, call `adapter.book()` **before** the
+        DB tx (NOT_IMPLEMENTED → 501), then short tx:
+        `recordSupplierBooking` + `BOOKING_SUPPLIER_BOOKED` via
+        `emitInTransaction`, COMMIT. Status **unchanged**. Audit/DB
+        failure rolls back; replay emits no second audit.
+      - `audit-event.types.ts`: new APP kind
+        `BOOKING_SUPPLIER_BOOKED` + payload.
+      - Repos: `BookingRecord`/`loadById` extended with supplier-book
+        fields; `recordSupplierBooking`, `loadGuestContact`;
+        `BookingSnapshotRepository.loadBookingTimeOfferSnapshot`.
+        Module imports `AdaptersModule` (`SupplierAdapterRegistry`).
+      - Tests: `book.test.ts` (fixture deterministic+idempotent,
+        stub/live NOT_IMPLEMENTED, adapter delegation, cancel still
+        not implemented); `booking-supplier.service.test.ts` (happy,
+        BookRequest build, audit-in-tx, pinned vs live fallback,
+        404/terminal/501, audit-fail rollback, replay + race);
+        `booking-supplier.controller.test.ts` (real DB, registry
+        overridden with fixture fake: records ref + audit, no status
+        change, replay no dup audit, confirm still independent →
+        3 audit kinds, 401/404).
+      - **Not** in this slice: live supplier booking, payment,
+        ledger, documents, cancellation/refund/compensation, full
+        ADR-010 saga sequencing, UI. Confirm behaviour unchanged.
+
 - [x] **Booking Truth — Slice 2: ADR-021 booking-time snapshot
       pinning at CONFIRMED + BOOKING_CONFIRMED (2026-05-19).**
       - Additive migration `20260519000001_booking_time_snapshots.ts`:

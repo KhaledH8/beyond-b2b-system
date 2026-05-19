@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { AuditModule } from '../audit/audit.module';
+import { AdaptersModule } from '../adapters/adapters.module';
 import { FxModule } from '../fx/fx.module';
 import { InternalAuthGuard } from '../internal-auth/internal-auth.guard';
 import { BookingRepository } from './booking.repository';
 import { BookingSnapshotRepository } from './booking-snapshot.repository';
 import { BookingService } from './booking.service';
 import { BookingIntakeService } from './booking-intake.service';
+import { BookingSupplierService } from './booking-supplier.service';
 import { BookingController } from './booking.controller';
 
 /**
@@ -27,12 +29,16 @@ import { BookingController } from './booking.controller';
  * this module is booted in isolation in tests (AuditModule is @Global
  * in the full app, but isolated test graphs must import it explicitly).
  *
- * No public booking endpoints, no supplier book(), no payment, no
- * ledger, no documents, and no refund/cancellation routes in this
- * slice — those are later, deliberate slices.
+ * Booking Truth Slice 3 adds `BookingSupplierService` +
+ * `POST /internal/bookings/:id/supplier-book`. Imports
+ * `AdaptersModule` for `SupplierAdapterRegistry` so the fixture
+ * adapter is reachable when this module is booted in isolation in
+ * tests. Supplier booking is fixture-only; live supplier booking,
+ * payment, ledger, documents, and refund/cancellation remain later,
+ * deliberate slices.
  */
 @Module({
-  imports: [DatabaseModule, AuditModule, FxModule],
+  imports: [DatabaseModule, AuditModule, AdaptersModule, FxModule],
   controllers: [BookingController],
   providers: [
     InternalAuthGuard,
@@ -40,7 +46,8 @@ import { BookingController } from './booking.controller';
     BookingSnapshotRepository,
     BookingService,
     BookingIntakeService,
+    BookingSupplierService,
   ],
-  exports: [BookingService, BookingIntakeService],
+  exports: [BookingService, BookingIntakeService, BookingSupplierService],
 })
 export class BookingModule {}

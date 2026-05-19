@@ -41,6 +41,17 @@ export interface BookingRecord {
   readonly sourceOfferSnapshotId: string | null;
   readonly supplierRef: string | null;
   readonly supplierRawRef: string | null;
+  /**
+   * Supplier-booking fields (Booking Truth Slice 3). All NULL until
+   * the supplier-book step records a (fixture-only) reservation.
+   * `supplierConfirmationRef` non-null is the idempotency lever:
+   * a replayed supplier-book returns the existing details.
+   */
+  readonly supplierId: string | null;
+  readonly supplierConfirmationRef: string | null;
+  readonly supplierBookedAt: string | null;
+  readonly supplierBookingStatus: 'CONFIRMED' | 'ON_REQUEST' | null;
+  readonly supplierBookingMode: 'FIXTURE' | 'LIVE' | null;
 }
 
 interface BookingDbRow {
@@ -54,6 +65,11 @@ interface BookingDbRow {
   readonly source_offer_snapshot_id: string | null;
   readonly supplier_ref: string | null;
   readonly supplier_raw_ref: string | null;
+  readonly supplier_id: string | null;
+  readonly supplier_confirmation_ref: string | null;
+  readonly supplier_booked_at: string | Date | null;
+  readonly supplier_booking_status: string | null;
+  readonly supplier_booking_mode: string | null;
 }
 
 /**
@@ -173,6 +189,16 @@ function rowToRecord(row: BookingDbRow): BookingRecord {
     sourceOfferSnapshotId: row.source_offer_snapshot_id,
     supplierRef: row.supplier_ref,
     supplierRawRef: row.supplier_raw_ref,
+    supplierId: row.supplier_id,
+    supplierConfirmationRef: row.supplier_confirmation_ref,
+    supplierBookedAt:
+      row.supplier_booked_at instanceof Date
+        ? row.supplier_booked_at.toISOString()
+        : row.supplier_booked_at,
+    supplierBookingStatus:
+      row.supplier_booking_status as BookingRecord['supplierBookingStatus'],
+    supplierBookingMode:
+      row.supplier_booking_mode as BookingRecord['supplierBookingMode'],
   };
 }
 
@@ -192,7 +218,10 @@ export class BookingRepository {
       `SELECT id, tenant_id, status,
               sell_amount_minor_units, sell_currency,
               account_id, reference, source_offer_snapshot_id,
-              supplier_ref, supplier_raw_ref
+              supplier_ref, supplier_raw_ref,
+              supplier_id, supplier_confirmation_ref,
+              supplier_booked_at, supplier_booking_status,
+              supplier_booking_mode
          FROM booking_booking
         WHERE id = $1`,
       [bookingId],
@@ -223,6 +252,78 @@ export class BookingRepository {
           AND status IN ('INITIATED', 'PENDING_PAYMENT')
         RETURNING id`,
       [bookingId],
+    );
+    return { updated: rows.length === 1 };
+  }
+
+  /**
+   * Reads guest contact from `guest_details->'guest'` (written at
+   * intake). Used only to build the supplier BookRequest. Missing
+   * fields surface as empty strings — guest PII validation is an
+   * intake concern, not this step's.
+   */
+  async loadGuestContact(
+    q: Queryable,
+    bookingId: string,
+  ): Promise<{ firstName: string; lastName: string; email: string }> {
+    const { rows } = await q.query<{
+      first_name: string | null;
+      last_name: string | null;
+      email: string | null;
+    }>(
+      `SELECT guest_details->'guest'->>'firstName' AS first_name,
+              guest_details->'guest'->>'lastName'  AS last_name,
+              guest_details->'guest'->>'email'     AS email
+         FROM booking_booking
+        WHERE id = $1`,
+      [bookingId],
+    );
+    const r = rows[0];
+    return {
+      firstName: r?.first_name ?? '',
+      lastName: r?.last_name ?? '',
+      email: r?.email ?? '',
+    };
+  }
+
+  /**
+   * Records a supplier booking result on a non-terminal booking
+   * (Booking Truth Slice 3). Deliberately does **not** touch
+   * `status` — supplier-book is data, not a state transition, until
+   * the full ADR-010 saga. The `WHERE status NOT IN (terminal)` guard
+   * is a defence-in-depth backstop; the service refuses terminal
+   * bookings before reaching here. Returns `{ updated }` so the
+   * caller can detect a concurrent terminal transition and roll back.
+   */
+  async recordSupplierBooking(
+    q: Queryable,
+    args: {
+      readonly bookingId: string;
+      readonly supplierId: string;
+      readonly supplierConfirmationRef: string;
+      readonly supplierBookingStatus: 'CONFIRMED' | 'ON_REQUEST';
+      readonly supplierBookingMode: 'FIXTURE' | 'LIVE';
+    },
+  ): Promise<{ updated: boolean }> {
+    const { rows } = await q.query<{ id: string }>(
+      `UPDATE booking_booking
+          SET supplier_id              = $2,
+              supplier_confirmation_ref = $3,
+              supplier_booking_status  = $4,
+              supplier_booking_mode    = $5,
+              supplier_booked_at       = now(),
+              updated_at               = now()
+        WHERE id = $1
+          AND status NOT IN ('CANCELLED', 'FAILED', 'REFUNDED')
+          AND supplier_confirmation_ref IS NULL
+        RETURNING id`,
+      [
+        args.bookingId,
+        args.supplierId,
+        args.supplierConfirmationRef,
+        args.supplierBookingStatus,
+        args.supplierBookingMode,
+      ],
     );
     return { updated: rows.length === 1 };
   }

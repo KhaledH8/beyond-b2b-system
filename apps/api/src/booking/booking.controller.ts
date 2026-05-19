@@ -17,6 +17,10 @@ import {
   BookingIntakeService,
   type BookingIntakeView,
 } from './booking-intake.service';
+import {
+  BookingSupplierService,
+  type SupplierBookingView,
+} from './booking-supplier.service';
 
 /**
  * Internal booking-confirm endpoint (ADR-024 C5c.3).
@@ -46,10 +50,17 @@ import {
  *   401:     missing/wrong X-Internal-Key
  *   422:     PROVISIONAL / not-bookable rate refused (ADR-020)
  *
- * Out of scope for this slice (deferred to C5c.4 / C5d):
- *   - public-facing booking endpoints
- *   - supplier book(), payment execution, ledger, documents
- *   - refund / cancellation routes
+ * `POST /internal/bookings/:id/supplier-book`  (Booking Truth Slice 3)
+ *   201: { booking: SupplierBookingView, replayed: boolean }
+ *   401: missing/wrong X-Internal-Key
+ *   404: booking not found
+ *   422: terminal booking / no supplier ingredients / no adapter
+ *   501: supplier adapter not in fixture mode (live/stub)
+ *   Records a fixture-only supplier confirmation ref. Does NOT change
+ *   booking status, move money, or generate documents.
+ *
+ * Out of scope: live supplier booking, payment, ledger, documents,
+ * refund/cancellation, full ADR-010 saga sequencing.
  */
 @UseGuards(InternalAuthGuard)
 @Controller('internal/bookings')
@@ -58,7 +69,17 @@ export class BookingController {
     @Inject(BookingService) private readonly service: BookingService,
     @Inject(BookingIntakeService)
     private readonly intakeService: BookingIntakeService,
+    @Inject(BookingSupplierService)
+    private readonly supplierService: BookingSupplierService,
   ) {}
+
+  @Post(':id/supplier-book')
+  @HttpCode(201)
+  async supplierBook(
+    @Param('id') id: string,
+  ): Promise<{ booking: SupplierBookingView; replayed: boolean }> {
+    return this.supplierService.supplierBook(id);
+  }
 
   @Post()
   @HttpCode(201)

@@ -101,7 +101,9 @@ none exists, the row is grounded in `TASKS.md` or a design doc.
 | Hotelbeds adapter (sourced) | implemented | Phase 1 scaffold + Phase 2 live HTTP client (signing, retry, capture). `SOURCED_COMPOSED` shape; `TOTAL_ONLY` granularity. | `packages/adapters/hotelbeds`, `apps/api/src/adapters/hotelbeds` | ADR-003, ADR-021 |
 | Hotelbeds money-movement resolver | implemented | Per-rate triple resolution; `PROVISIONAL` mode prevents booking until ops confirms commercial. | `packages/adapters/hotelbeds/src/money-movement.ts` | ADR-020 |
 | Hotelbeds fixture replay | implemented | Deterministic JSON fixtures + content-addressed MinIO writes; conformance test against real Postgres + MinIO. | `packages/testing/src/hotelbeds/fixtures/`, `packages/adapters/hotelbeds/src/fixture-client.ts` | ADR-003 |
-| Hotelbeds booking confirmation | planned | Phase 2 adapter `book()` / `cancel()` paths still throw `HotelbedsNotImplementedError`. | (planned in Phase 2) | ADR-003 |
+| Hotelbeds booking — fixture mode | implemented | Slice 3: `HotelbedsAdapter.book()` delegates to the client; fixture client returns a deterministic `HB-FIX-<hash>` CONFIRMED ref. Stub/live `book()` still throw `NOT_IMPLEMENTED` (live booking impossible). `cancel()` still not implemented. | `packages/adapters/hotelbeds/src/{adapter,client,fixture-client,live-client}.ts` | ADR-003 |
+| Hotelbeds booking — live | planned | Live `book()`/`cancel()` + Hotelbeds booking-API certification + commercial sign-off. | (later slice) | ADR-003 |
+| Supplier-book step (`POST /internal/bookings/:id/supplier-book`) | implemented | Slice 3: fixture-only; records `supplier_confirmation_ref` + supplier-booking columns and emits durable `BOOKING_SUPPLIER_BOOKED`; idempotent; does **not** change booking status; 501 for stub/live. | `apps/api/src/booking/booking-supplier.service.ts` | ADR-003, ADR-010 (2026-05-19 amendment), ADR-028 |
 | WebBeds adapter | planned | Phase 2 second sourced adapter. | — | ADR-003 |
 | TBO adapter | planned | Phase 2/3 sourced adapter. | — | ADR-003 |
 | Rayna adapter | blocked | Technical availability and data shape unconfirmed. | — | ADR-003 |

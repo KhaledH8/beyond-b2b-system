@@ -194,3 +194,17 @@ is closed and defined in ADR-020; adapters that declare an invalid
 combination fail conformance. Downstream code (pricing, booking
 saga, ledger, documents) branches on these axes rather than on the
 legacy `booking_payment_model` or on supplier identity.
+
+## Amendment 2026-05-19 (Booking Truth — Slice 3: fixture book())
+
+`SupplierAdapter.book()` is now exercised end-to-end for the first
+time, fixture-only. The `HotelbedsClient` interface gains a `book`
+method; `HotelbedsAdapter.book()` delegates to it (mirrors
+`fetchRates`). Only the fixture client implements `book()`
+(deterministic `HB-FIX-<sha256-12>` ref, status CONFIRMED); the stub
+and live clients reject `book()` with `HotelbedsNotImplementedError`
+(`code: 'NOT_IMPLEMENTED'`). `cancel()` is unchanged (still not
+implemented). The contract itself is unchanged — this amendment only
+records that the previously-throwing `book()` path now has a safe
+fixture implementation. Live `book()`/`cancel()` remain a later,
+deliberate slice with certification + commercial sign-off.

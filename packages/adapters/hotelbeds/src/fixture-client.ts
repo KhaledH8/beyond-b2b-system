@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
 import type {
   HotelbedsAvailabilityRequest,
   HotelbedsAvailabilityResponse,
+  HotelbedsBookRequest,
+  HotelbedsBookResponse,
   HotelbedsClient,
   HotelbedsHotelsRequest,
   HotelbedsHotelsResponse,
@@ -50,6 +53,24 @@ export function createFixtureHotelbedsClient(
       _req: HotelbedsAvailabilityRequest,
     ): Promise<HotelbedsRawResponse<HotelbedsAvailabilityResponse>> {
       return toRawResponse(fixtures.availabilityResponse);
+    },
+    /**
+     * Deterministic fixture booking. No network, no fixture file: the
+     * supplier reference is a stable hash of the idempotency key, so
+     * the same booking attempt always yields the same ref (the
+     * adapter-side idempotency contract). Always CONFIRMED.
+     */
+    async book(req: HotelbedsBookRequest): Promise<HotelbedsBookResponse> {
+      const shortHash = createHash('sha256')
+        .update(req.idempotencyKey)
+        .digest('hex')
+        .slice(0, 12)
+        .toUpperCase();
+      return {
+        supplierBookingRef: `HB-FIX-${shortHash}`,
+        status: 'CONFIRMED',
+        confirmedAt: new Date().toISOString(),
+      };
     },
   };
 }

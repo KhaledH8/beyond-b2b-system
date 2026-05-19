@@ -4,9 +4,9 @@ Snapshot of where Beyond Borders **actually is** right now.
 Refreshed at the end of every behaviour-changing slice — see the working
 rule in `CLAUDE.md` §11.
 
-- **Last updated:** 2026-05-19 (Booking Truth Slice 2 — ADR-021
-  booking-time snapshot pinning at CONFIRMED + `BOOKING_CONFIRMED`
-  in-transaction; Booking Intake Slice 1; ADR-028 audit read LIST;
+- **Last updated:** 2026-05-19 (Booking Truth Slice 3 — fixture-only
+  supplier booking step + `BOOKING_SUPPLIER_BOOKED`; Slice 2 ADR-021
+  booking-time snapshots; Slice 1 intake; ADR-028 audit read LIST;
   ADR-029 step 6 layout v0; ADR-027 V1.0 e2e + TTL/tenant hardening)
 - **Active phase (per `docs/roadmap.md`):** Phase 1 (first implementation
   tasks), with Phase 2 sequencing already locked in ADRs.
@@ -229,11 +229,34 @@ rule in `CLAUDE.md` §11.
   idempotent already-CONFIRMED fast-path pins nothing and emits no
   second audit. `source_offer_snapshot_id` is now the trace key from
   booking-time truth back to the (prunable) live snapshot.
-  - Still **not** implemented: supplier `book()`, payment, ledger,
-    documents, cancellation/refund, full ADR-010 saga, UI.
+- Supplier booking — fixture mode (Slice 3, 2026-05-19): additive
+  migration adding NULLable `supplier_booked_at`,
+  `supplier_booking_status` (CHECK CONFIRMED|ON_REQUEST),
+  `supplier_booking_mode` (CHECK FIXTURE|LIVE) to `booking_booking`
+  (reuses existing `supplier_id` + `supplier_confirmation_ref`).
+  `POST /internal/bookings/:id/supplier-book` (`InternalAuthGuard`):
+  resolves supplier ingredients from the pinned
+  `booking_sourced_offer_snapshot` (else the live
+  `offer_sourced_snapshot` fallback), calls `adapter.book()` **before**
+  any DB transaction, then in one short tx records the supplier fields
+  and emits a durable `BOOKING_SUPPLIER_BOOKED` audit
+  (`emitInTransaction`; audit failure rolls back). **Does not change
+  `booking_booking.status`.** Idempotent: `supplier_confirmation_ref`
+  presence → replay (no adapter call, no second audit). Terminal
+  bookings refused (422). `HotelbedsAdapter.book()` now delegates to
+  the injected client; only the **fixture** client returns a
+  deterministic `HB-FIX-<hash>` CONFIRMED ref — stub and live clients
+  reject `book()` with `NOT_IMPLEMENTED`, surfaced as **501**, so a
+  live supplier booking is impossible in this slice. `cancel()`
+  remains not implemented.
+  - Still **not** implemented: live supplier booking, payment,
+    ledger, documents, cancellation/refund/compensation, full
+    ADR-010 saga sequencing (supplier-book does not gate CONFIRMED),
+    UI.
 - Internal booking-confirm endpoint as the first saga step; FX lock +
   ADR-021 booking-time snapshots + `BOOKING_CONFIRMED` applied inside
-  the confirmation transaction.
+  the confirmation transaction. Confirm behaviour is unchanged by
+  Slice 3 (supplier-book is an independent step).
 
 ### Admin & internal
 - `InternalAuthGuard` + `@Actor()` on every `/internal/...` endpoint
@@ -562,16 +585,17 @@ formally retired as an unused number in `docs/adrs/INDEX.md`.
 
 Candidate slices, picked by priority call:
 
-- **Booking Truth Slice 3 — supplier `book()` (fixture mode first)**
-  — backend track, next booking-truth slice. Bookings now intake
-  (`INITIATED`) and confirm with pinned ADR-021 booking-time truth +
-  `BOOKING_CONFIRMED`, but no supplier reservation is ever made:
-  `HotelbedsAdapter.book()` still throws `HotelbedsNotImplementedError`.
-  Next is a fixture-mode `book()` wired into confirm (provisional →
-  supplier confirmation ref on `booking_booking`) with its own
-  rollback semantics — still no real payment/ledger/documents.
-  (Slices 1 + 2 are shipped; the immutable record of what was sold
-  now exists.)
+- **Booking Truth Slice 4 — saga sequencing + live supplier `book()`
+  (separate slices)** — backend track. Slices 1–3 are shipped:
+  intake (`INITIATED`), ADR-021 booking-time truth + `BOOKING_CONFIRMED`
+  at confirm, and a fixture-only supplier-book step
+  (`BOOKING_SUPPLIER_BOOKED`, no status change). Remaining
+  booking-truth work, each its own slice: (a) ADR-010 saga state
+  machine so supplier-book/confirm are properly ordered and a
+  `SUPPLIER_BOOKED` state exists with compensation; (b) live
+  Hotelbeds `book()` + certification; (c) `cancel()` /
+  cancellation-refund compensation. Payment, ledger, documents
+  remain out of scope until their own slices.
 - **ADR-027 impersonation UI** — frontend track. First feature slice
   on top of the ADR-029 foundation (complete). Persistent
   `<Banner variant="danger">` in the `<SystemBanner />` slot on
